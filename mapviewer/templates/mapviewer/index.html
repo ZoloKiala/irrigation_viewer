@@ -1,0 +1,1201 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Irrigation Viewer</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+
+    <!-- Icons -->
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+
+    <!-- MapLibre + Draw CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.css"/>
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="{% static 'mapviewer/map.css' %}"/>
+
+    <style>
+      :root{
+        --giims-bg: #020617;
+        --giims-panel: rgba(15,23,42,0.96);
+        --giims-border-soft: rgba(148,163,184,.3);
+        --giims-border-strong: rgba(55,65,81,.9);
+        --giims-text: #e5e7eb;
+        --giims-muted: #9ca3af;
+      }
+
+      *{ box-sizing: border-box; }
+
+      html, body{
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;  /* avoid dark band/footer */
+      }
+
+      body{
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                     "Helvetica Neue", Arial, sans-serif;
+        background: var(--giims-bg);
+        color: var(--giims-text);
+      }
+
+      .giims-main{
+        flex: 1 1 auto;
+        display: flex;
+        gap: .5rem;
+        min-height: 0;
+      }
+
+      /* ----------------- LAYER TREE (collapsible, tree-style) ----------------- */
+      .layer-tree{
+        margin: 0 0 .75rem 0;
+        padding-left: .1rem;
+        border-top: 1px solid rgba(30,41,59,.8);
+      }
+
+      .layer-tree .layer-group.card{
+        background: transparent;
+        border: none !important;
+        box-shadow: none;
+        border-radius: 0;
+        margin: .45rem 0;
+        position: relative;
+      }
+
+      .layer-tree .layer-group.card::before{
+        content: "";
+        position: absolute;
+        left: .65rem;
+        top: .3rem;
+        bottom: -.2rem;
+        border-left: 1px dashed rgba(75,85,99,.7);
+      }
+
+      .layer-group-header{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: .4rem .75rem;
+        cursor: pointer;
+        border-radius: 0;
+        color: var(--giims-text);
+        background: transparent;
+        position: relative;
+        z-index: 1;
+      }
+
+      .layer-group-header:hover{
+        background: rgba(148,163,184,0.09);
+      }
+
+      .layer-group-main{
+        display: flex;
+        align-items: center;
+        gap: .35rem;
+      }
+
+      .layer-group-icon{
+        font-size: .9rem;
+        color: #a5b4fc;
+      }
+
+      .layer-group-title{
+        font-size: .86rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .layer-group-chevron{
+        transition: transform .2s ease;
+        font-size: .75rem;
+        color: var(--giims-muted);
+      }
+
+      .layer-group.open .layer-group-chevron{
+        transform: rotate(180deg);
+      }
+
+      .layer-group .card-body{
+        background: transparent;
+        font-size: .8rem;
+        padding: 0 0 .3rem 0;
+        margin-left: 1.4rem;
+        display: none;
+      }
+
+      .layer-group.open .card-body{
+        display: block;
+      }
+
+      .layer-leaf-list{
+        margin: .15rem 0 .4rem;
+        padding-left: 1.2rem;
+        position: relative;
+      }
+
+      .layer-leaf-list::before{
+        content: "";
+        position: absolute;
+        left: .15rem;
+        top: 0;
+        bottom: .2rem;
+        border-left: 1px dashed rgba(75,85,99,.6);
+      }
+
+      .layer-leaf{
+        padding: .12rem 0 .12rem .25rem;
+        position: relative;
+      }
+
+      .layer-leaf::before{
+        content: "";
+        position: absolute;
+        left: -1.0rem;
+        top: 50%;
+        width: .9rem;
+        border-bottom: 1px dashed rgba(75,85,99,.6);
+        transform: translateY(-50%);
+      }
+
+      .layer-label{
+        color: var(--giims-text);
+      }
+
+      #statusBox{
+        font-size: .75rem;
+        color: var(--giims-muted);
+      }
+
+      #analysisBox{ font-size: .78rem; }
+
+      .giims-map-shell{
+        flex: 1 1 auto;
+        min-width: 0;
+        border-radius: .9rem;
+        border: 1px solid var(--giims-border-soft);
+        background:
+          radial-gradient(circle at top left, rgba(37,99,235,.25) 0, transparent 55%),
+          radial-gradient(circle at bottom right, rgba(16,185,129,.25) 0, transparent 55%),
+          #020617;
+        box-shadow: 0 18px 65px rgba(0,0,0,.7);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+      }
+
+      #map{
+        position: absolute;
+        inset: 0;
+      }
+
+      .with-nav{
+        height: calc(100vh - 56px);
+      }
+
+      .map-col{
+        height: 100%;
+        position: relative;
+        background: var(--giims-bg);
+      }
+
+      .map-host,
+      #map{
+        height: 100%;
+      }
+
+      /* --- Basemap gallery --- */
+      .map-basemap-toggle{
+        position: absolute;
+        top: 6.5rem;
+        right: .45rem;
+        z-index: 11;
+        width: 30px;
+        height: 30px;
+        border-radius: .55rem;
+        background: rgba(15,23,42,.95);
+        border: 1px solid rgba(148,163,184,.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 8px 25px rgba(0,0,0,.7);
+      }
+      .map-basemap-toggle i{
+        font-size: 1.05rem;
+      }
+
+      .map-basemaps-popup{
+        position: absolute;
+        top: 6.0rem;
+        right: 3.1rem;
+        z-index: 10;
+        width: 280px;
+        max-width: 90%;
+        background: rgba(15,23,42,.97);
+        border-radius: .7rem;
+        border: 1px solid rgba(148,163,184,.9);
+        box-shadow: 0 18px 40px rgba(0,0,0,.85);
+        color: var(--giims-text);
+        font-size: .7rem;
+        display: none;
+      }
+      .map-basemaps-popup.open{ display:block; }
+
+      .map-basemaps-header{
+        padding: .4rem .6rem;
+        border-bottom: 1px solid rgba(55,65,81,.9);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .map-basemaps-grid{
+        padding: .4rem .6rem .55rem;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: .35rem;
+      }
+
+      .map-basemap-card{
+        border: none;
+        background: transparent;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: .2rem;
+        cursor: pointer;
+        color: inherit;
+        font-size: .65rem;
+        text-align: center;
+      }
+
+      .map-basemap-thumb{
+        width: 70px;
+        height: 52px;
+        border-radius: .3rem;
+        border: 1px solid rgba(148,163,184,.7);
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        box-shadow: 0 6px 16px rgba(0,0,0,.7);
+      }
+
+      .thumb-osm{
+        background-image: url("{% static 'mapviewer/thumb_streets.jpeg' %}");
+      }
+
+      .thumb-terrain{
+        background-image: url("{% static 'mapviewer/thumb_terrain.png' %}");
+      }
+
+      .thumb-sat{
+        background-image: url("{% static 'mapviewer/thumb_satellite.png' %}");
+      }
+
+      /* Search / locate widget – top-left */
+      .map-search{
+        position: absolute;
+        top: .75rem;
+        left: .75rem;
+        z-index: 10;
+        background: rgba(15,23,42,.9);
+        border-radius: 999px;
+        border: 1px solid rgba(148,163,184,.9);
+        padding: .12rem .4rem;
+        min-width: 230px;
+      }
+      .map-search .form-control{
+        background: transparent;
+        border: none;
+        color: var(--giims-text);
+      }
+      .map-search .form-control:focus{
+        box-shadow: none;
+        outline: none;
+      }
+      .map-search .btn-icon{
+        padding-left: .4rem;
+        padding-right: .4rem;
+      }
+
+      /* Draw toolbar – vertically below search */
+      .draw-toolbar{
+        position: absolute;
+        top: 3.6rem;
+        left: .75rem;
+        z-index: 10;
+        background: rgba(15,23,42,.85);
+        border-radius: 999px;
+        padding: .15rem;
+        border: 1px solid rgba(148,163,184,.9);
+        box-shadow: 0 10px 30px rgba(0,0,0,.7);
+      }
+
+      .draw-toolbar .btn{
+        font-size: .78rem;
+      }
+
+      .draw-toolbar.btn-group{
+        display: flex;
+        flex-direction: column;
+      }
+
+      .draw-toolbar .btn{
+        display: block;
+        border-radius: 999px;
+        margin: 2px 0;
+        padding-inline: .45rem;
+      }
+
+      .legend{
+        position: absolute;
+        bottom: .75rem;
+        right: .75rem;
+        z-index: 10;
+        background: rgba(15,23,42,.9);
+        border-radius: .6rem;
+        padding: .45rem .6rem;
+        border: 1px solid rgba(148,163,184,.9);
+        font-size: .78rem;
+        max-width: 260px;
+      }
+
+      @media (max-width: 576px){
+        .map-basemap-toggle{
+          top: 3.8rem;
+          right: .4rem;
+        }
+        .map-basemaps-popup{
+          top: 3.8rem;
+          right: .4rem;
+          width: 230px;
+        }
+      }
+
+      .with-nav{
+        height: calc(100vh - 56px);
+        background: var(--giims-bg);
+      }
+
+      body{
+        background: var(--giims-bg);
+      }
+
+      .giims-map-shell{
+        background:
+          radial-gradient(circle at top left, rgba(37,99,235,.25) 0, transparent 55%),
+          radial-gradient(circle at bottom right, rgba(16,185,129,.25) 0, transparent 55%),
+          var(--giims-bg);
+      }
+
+      /* ---------------- Attribute panel on map (movable + resizable) --------------- */
+      .attribute-panel{
+        position: absolute;
+        bottom: 3.1rem; /* leave space for toggle button */
+        left: .8rem;
+        z-index: 12;
+        background: rgba(15,23,42,0.97);
+        border-radius: .7rem;
+        border: 1px solid rgba(148,163,184,.8);
+        box-shadow: 0 16px 45px rgba(0,0,0,.8);
+        font-size: .78rem;
+        min-width: 320px;
+        max-width: 70%;
+        min-height: 140px;
+        max-height: 70%;
+        display: flex;
+        flex-direction: column;
+        resize: both;
+        overflow: hidden;
+      }
+
+      .attribute-panel-header{
+        padding: .35rem .55rem;
+        border-bottom: 1px solid rgba(55,65,81,.9);
+        cursor: move;
+        background: linear-gradient(
+          to right,
+          rgba(15,23,42,1),
+          rgba(15,23,42,0.96)
+        );
+        font-size: .75rem;
+      }
+
+      .attribute-panel-body{
+        padding: .4rem .55rem .45rem;
+        overflow: auto;
+      }
+
+      .attribute-panel-body table{
+        font-size: .76rem;
+      }
+
+      .attribute-panel-body .table-responsive{
+        margin-bottom: .4rem;
+      }
+
+      .attribute-panel-title{
+        font-size: .78rem;
+        font-weight: 600;
+      }
+
+      .attribute-search-input{
+        background-color: rgba(15,23,42,0.9);
+        border: 1px solid rgba(148,163,184,.7);
+        color: var(--giims-text);
+      }
+      .attribute-search-input:focus{
+        box-shadow: 0 0 0 .15rem rgba(37,99,235,.35);
+        outline: none;
+      }
+
+      /* attribute toggle button */
+      .attribute-toggle-btn{
+        position: absolute;
+        bottom: .8rem;
+        left: .8rem;
+        z-index: 13;
+        border-radius: 999px;
+        background: rgba(15,23,42,.95);
+        border: 1px solid rgba(148,163,184,.9);
+        box-shadow: 0 10px 30px rgba(0,0,0,.8);
+        font-size: .78rem;
+      }
+
+      /* selected row highlight */
+      .attribute-table-row.is-selected {
+        background-color: rgba(250, 204, 21, 0.25) !important;
+        outline: 1px solid rgba(250, 204, 21, 0.7);
+      }
+
+      @media (max-width: 768px){
+        .attribute-panel{
+          min-width: 260px;
+          max-width: 95%;
+          bottom: 3.1rem;
+          left: .6rem;
+        }
+      }
+
+      /* ===================== APP LOADER (FACEBOOK-STYLE SKELETON) ===================== */
+      .app-loader-backdrop{
+        position: fixed;
+        inset: 0;
+        background: #020617;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        transition: opacity .4s ease, visibility .4s ease;
+      }
+      .app-loader-hidden{
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .app-loader-card{
+        width: min(520px, 90%);
+        border-radius: 1rem;
+        padding: 1.5rem 1.75rem;
+        background:
+          radial-gradient(circle at top left, rgba(59,130,246,.18) 0, transparent 55%),
+          radial-gradient(circle at bottom right, rgba(16,185,129,.18) 0, transparent 55%),
+          #020617;
+        border: 1px solid rgba(148,163,184,.4);
+        box-shadow: 0 24px 80px rgba(0,0,0,.85);
+      }
+      .app-loader-header{
+        display: flex;
+        align-items: center;
+        gap: .65rem;
+        margin-bottom: 1.1rem;
+      }
+      .app-loader-logo{
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #22c55e, #3b82f6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+        color: #fff;
+      }
+      .app-loader-title{
+        font-weight: 600;
+        font-size: .95rem;
+      }
+      .app-loader-subtitle{
+        font-size: .8rem;
+        color: var(--giims-muted);
+      }
+      .app-loader-skeleton{
+        border-radius: .75rem;
+        background: #020617;
+        border: 1px solid rgba(31,41,55,.9);
+        padding: .75rem;
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: .75rem;
+        margin-bottom: .15rem;
+      }
+      .app-loader-block{
+        height: 46px;
+        border-radius: .5rem;
+        background:
+          linear-gradient(
+            90deg,
+            #020617 0%,
+            #111827 20%,
+            #020617 40%,
+            #020617 100%
+          );
+        background-size: 200% 100%;
+        animation: appSkeleton 1.1s ease-in-out infinite;
+      }
+      .app-loader-block.map{
+        height: 70px;
+      }
+      @keyframes appSkeleton{
+        0%{ background-position: 200% 0; }
+        100%{ background-position: -200% 0; }
+      }
+
+      /* ============ "asset" question-mark icon next to layer label ============ */
+      .layer-asset-info-btn{
+        border: none;
+        background: transparent;
+        padding: 0;
+        margin-left: .25rem;
+        color: var(--giims-muted);
+        font-size: .9rem;
+        cursor: pointer;
+      }
+      .layer-asset-info-btn:hover{
+        color: #e5e7eb;
+      }
+
+      /* Make map popup X (close button) big and bright */
+.mapboxgl-popup-close-button,
+.maplibregl-popup-close-button{
+  color: #ffffff !important;
+  font-size: 18px;
+  font-weight: 700;
+  background: rgba(15,23,42,0.95);
+  border: 1px solid rgba(148,163,184,.8);
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  line-height: 20px;
+  top: 4px;
+  right: 4px;
+}
+
+/* Optional: make sure it's not hidden by padding */
+.mapboxgl-popup,
+.maplibregl-popup{
+  z-index: 20;
+}
+
+    </style>
+  </head>
+
+  <body class="bg-dark text-light">
+    <!-- ===================== APP LOADER OVERLAY ===================== -->
+    <div id="appLoader" class="app-loader-backdrop">
+      <div class="app-loader-card">
+        <div class="app-loader-header">
+          <div class="app-loader-logo">
+            <i class="bi bi-droplet-half"></i>
+          </div>
+          <div>
+            <div class="app-loader-title">Loading Irrigation Viewer…</div>
+            <div class="app-loader-subtitle">
+              Preparing map, layers and analysis tools.
+            </div>
+          </div>
+        </div>
+        <div class="app-loader-skeleton">
+          <div class="d-flex flex-column gap-2">
+            <div class="app-loader-block"></div>
+            <div class="app-loader-block"></div>
+          </div>
+          <div class="d-flex flex-column gap-2">
+            <div class="app-loader-block map"></div>
+            <div class="app-loader-block"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ================================================================ -->
+
+    <!-- Top nav -->
+    <nav class="navbar navbar-dark bg-dark navbar-expand-lg fixed-top border-bottom border-secondary">
+      <div class="container-fluid">
+        <a class="navbar-brand d-flex align-items-center" href="#">
+          <img src="{% static 'mapviewer/logo.svg' %}" alt="Irrigation Viewer" height="24" class="me-2"/>
+          <span class="fw-semibold">Irrigation Viewer</span>
+        </a>
+
+        <span id="activeLayer" class="small text-secondary ms-auto">
+          Active: <span class="text-secondary">none</span>
+        </span>
+      </div>
+    </nav>
+
+    <div class="container-fluid p-0">
+      <div class="row g-0 with-nav mt-nav">
+        <!-- Sidebar -->
+        <aside class="sidebar col-12 col-md-4 col-lg-3 bg-panel p-3 p-md-4 border-end border-secondary-subtle overflow-auto">
+          <h1 class="h5 fw-bold mb-3">Layers</h1>
+          <p class="text-secondary small mb-3">
+            Toggle a suitability map (single-select) and optional boundaries.
+          </p>
+
+          <ul class="layer-tree list-unstyled small mb-3">
+            <!-- Suitability -->
+            <li class="layer-group card open">
+              <div class="layer-group-header layer-toggle">
+                <div class="layer-group-main">
+                  <i class="bi bi-folder2-open layer-group-icon"></i>
+                  <span class="layer-group-title">Suitability maps</span>
+                </div>
+                <span class="layer-group-chevron">
+                  <i class="bi bi-chevron-down"></i>
+                </span>
+              </div>
+              <div class="card-body">
+                <div id="group-suitability" class="layer-leaf-list vstack gap-1">
+                  {% for layer in layers %}
+                    {% if 'projects/' in layer.dataset %}
+                      <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0">
+                        <input class="form-check-input flex-shrink-0" type="checkbox"
+                               name="layer" value="{{ layer.dataset }}" data-id="{{ layer.id }}"/>
+                        <span class="layer-label text-truncate">{{ layer.label }}</span>
+                      </label>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </li>
+
+            <!-- Boundaries -->
+            <li class="layer-group card open">
+              <div class="layer-group-header layer-toggle">
+                <div class="layer-group-main">
+                  <i class="bi bi-folder2-open layer-group-icon"></i>
+                  <span class="layer-group-title">Administrative boundaries</span>
+                </div>
+                <span class="layer-group-chevron">
+                  <i class="bi bi-chevron-down"></i>
+                </span>
+              </div>
+              <div class="card-body">
+                <div id="group-boundaries" class="layer-leaf-list vstack gap-1">
+                  {% for layer in layers %}
+                    {% if "BOUNDARY_" in layer.dataset %}
+                      <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0">
+                        <input class="form-check-input flex-shrink-0" type="checkbox"
+                               name="layer" value="{{ layer.dataset }}" data-id="{{ layer.id }}"/>
+                        <span class="layer-label text-truncate">{{ layer.label }}</span>
+                      </label>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </li>
+
+            <!-- Socio-economic layers -->
+            <li class="layer-group card open">
+              <div class="layer-group-header layer-toggle">
+                <div class="layer-group-main">
+                  <i class="bi bi-folder2-open layer-group-icon"></i>
+                  <span class="layer-group-title">Socio-economic layers</span>
+                </div>
+                <span class="layer-group-chevron">
+                  <i class="bi bi-chevron-down"></i>
+                </span>
+              </div>
+              <div class="card-body">
+                <div id="group-socio" class="layer-leaf-list vstack gap-1">
+                  <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0">
+                    <input class="form-check-input flex-shrink-0" type="checkbox"
+                           name="layer"
+                           value="projects/tethys-app-1/assets/masvingo_irrigation_schemes"
+                           data-id="SOC_MASVINGO_SCHEMES"/>
+                    <span class="layer-label text-truncate">Masvingo (asset)</span>
+                  </label>
+
+                  <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0">
+                    <input class="form-check-input flex-shrink-0" type="checkbox"
+                           name="layer"
+                           value="projects/tethys-app-1/assets/solar_pump_providers"
+                           data-id="SOC_SOLAR_PUMP_PROVIDERS"/>
+                    <span class="layer-label text-truncate">Solar pump providers (asset)</span>
+                  </label>
+
+                  <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0">
+                    <input class="form-check-input flex-shrink-0" type="checkbox"
+                           name="layer"
+                           value="projects/tethys-app-1/assets/matebeland_south_irrigation_schemes"
+                           data-id="SOC_MAT_SOUTH_SCHEMES"/>
+                    <span class="layer-label text-truncate">Matabeleland South (asset)</span>
+                  </label>
+
+                  <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0">
+                    <input class="form-check-input flex-shrink-0" type="checkbox"
+                           name="layer"
+                           value="projects/tethys-app-1/assets/mashonaland_central_irrigation_schemes"
+                           data-id="SOC_MASH_CENTRAL_SCHEMES"/>
+                    <span class="layer-label text-truncate">Mashonaland Central (asset)</span>
+                  </label>
+                </div>
+              </div>
+            </li>
+          </ul>
+
+          <div class="mt-2 small text-secondary" id="statusBox"></div>
+
+          <hr class="border-secondary-subtle my-4"/>
+
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h6 fw-bold mb-0">Analysis</h2>
+          </div>
+
+          <div id="analysisBox" class="small text-secondary mb-2">
+            <em>Pick a suitability map, then draw a polygon or click a boundary and use “Run analysis” in the popup.</em>
+          </div>
+
+          <div class="card bg-panel border-0 mb-2">
+            <div class="card-body p-2">
+              <div style="height:220px;">
+                <canvas id="irr-chart"></canvas>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Map panel -->
+        <main class="map-col col-12 col-md-8 col-lg-9 position-relative overflow-hidden">
+          <div id="map" class="map-host"></div>
+
+          <!-- Attribute toggle button -->
+          <button id="attributeToggleBtn"
+                  type="button"
+                  class="btn btn-outline-light btn-sm attribute-toggle-btn">
+            <i class="bi bi-table"></i> Attributes
+          </button>
+
+          <!-- Search / locate widget (top-left) -->
+          <div id="searchWidget" class="map-search shadow-sm">
+            <div class="input-group input-group-sm">
+              <input type="text"
+                     class="form-control form-control-sm"
+                     id="searchInput"
+                     placeholder="Search location…">
+              <button class="btn btn-outline-light btn-icon" id="searchBtn" type="button" title="Search">
+                <i class="bi bi-search"></i>
+              </button>
+              <button class="btn btn-outline-light btn-icon" id="locateBtn" type="button" title="Use my location">
+                <i class="bi bi-geo-alt-fill"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Draw toolbar -->
+          <div id="drawToolbar"
+               class="draw-toolbar btn-group btn-group-sm"
+               role="group"
+               aria-label="Drawing tools">
+            <button type="button"
+                    class="btn btn-dark btn-sm active"
+                    data-mode="select"
+                    title="Pan / select shapes">
+              <i class="bi bi-cursor"></i>
+            </button>
+            <button type="button"
+                    class="btn btn-dark btn-sm"
+                    data-mode="polygon"
+                    title="Draw polygon">
+              <i class="bi bi-pentagon-fill"></i>
+            </button>
+            <button type="button"
+                    class="btn btn-dark btn-sm"
+                    data-mode="clear"
+                    title="Clear drawings">
+              <i class="bi bi-trash3"></i>
+            </button>
+          </div>
+
+          <!-- Basemap gallery -->
+          <div id="basemapToggle" class="map-basemap-toggle" title="Change basemap">
+            <i class="bi bi-layers-fill"></i>
+          </div>
+
+          <div id="basemapSwitcher" class="map-basemaps-popup" aria-label="Basemap gallery">
+            <div class="map-basemaps-header">
+              <span>Basemap gallery</span>
+              <button type="button" class="btn-close btn-close-white btn-sm" id="basemapClose"></button>
+            </div>
+            <div class="map-basemaps-grid">
+              <button type="button"
+                      class="map-basemap-card"
+                      data-basemap="osm">
+                <div class="map-basemap-thumb thumb-osm"></div>
+                <span>Streets</span>
+              </button>
+              <button type="button"
+                      class="map-basemap-card"
+                      data-basemap="terrain">
+                <div class="map-basemap-thumb thumb-terrain"></div>
+                <span>Terrain</span>
+              </button>
+              <button type="button"
+                      class="map-basemap-card"
+                      data-basemap="satellite">
+                <div class="map-basemap-thumb thumb-sat"></div>
+                <span>Satellite</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Legend -->
+          <div id="legend" class="legend" style="display:none;"></div>
+
+          <!-- Movable + resizable attribute panel (hidden by default) -->
+          <div id="attributePanel" class="attribute-panel d-none">
+            <div id="attributePanelHeader"
+                 class="attribute-panel-header d-flex justify-content-between align-items-center">
+              <span class="attribute-panel-title">
+                Attributes
+              </span>
+              <button type="button"
+                      class="btn btn-sm btn-outline-light py-0 px-2"
+                      id="attributePanelCloseBtn"
+                      title="Hide attribute tables">
+                ✕
+              </button>
+            </div>
+            <div id="attributeTables" class="attribute-panel-body">
+              <!-- tables inserted here by map.js -->
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Layer info modal -->
+    <div class="modal fade" id="layerInfoModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-sm modal-dialog-scrollable">
+        <div class="modal-content bg-dark text-light">
+          <div class="modal-header border-secondary">
+            <h5 class="modal-title" id="layerInfoModalLabel">Layer info</h5>
+            <button type="button"
+                    class="btn-close btn-close-white"
+                    data-bs-dismiss="modal"
+                    aria-label="Close"></button>
+          </div>
+          <div class="modal-body small text-secondary" id="layerInfoModalBody">
+            <!-- filled dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JS libs -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.js"></script>
+    <script>window.mapboxgl = window.mapboxgl || window.maplibregl;</script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+    <!-- Chart.js + wrapper -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script src="{% static 'mapviewer/chart.js' %}"></script>
+
+    <!-- Basemap gallery open/close -->
+    <script>
+      document.addEventListener("DOMContentLoaded", function(){
+        const toggle = document.getElementById("basemapToggle");
+        const popup  = document.getElementById("basemapSwitcher");
+        const close  = document.getElementById("basemapClose");
+
+        if (toggle && popup) {
+          toggle.addEventListener("click", () => {
+            popup.classList.add("open");
+          });
+        }
+        if (close && popup) {
+          close.addEventListener("click", () => {
+            popup.classList.remove("open");
+          });
+        }
+      });
+    </script>
+
+    <!-- Attribute panel drag + close + toggle button -->
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        const panel   = document.getElementById("attributePanel");
+        const header  = document.getElementById("attributePanelHeader");
+        const close   = document.getElementById("attributePanelCloseBtn");
+        const mapCol  = document.querySelector(".map-col");
+        const toggleBtn = document.getElementById("attributeToggleBtn");
+
+        if (!panel || !header || !mapCol) return;
+
+        // Button to show/hide whole panel
+        if (toggleBtn) {
+          toggleBtn.addEventListener("click", function () {
+            panel.classList.toggle("d-none");
+          });
+        }
+
+        if (close) {
+          close.addEventListener("click", function () {
+            panel.classList.add("d-none");
+          });
+        }
+
+        // Dragging
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let startTop = 0;
+
+        const onMouseMove = (e) => {
+          if (!isDragging) return;
+
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+
+          let newLeft = startLeft + dx;
+          let newTop  = startTop + dy;
+
+          const rect = mapCol.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+
+          const minLeft = rect.left + 8;
+          const maxLeft = rect.right - panelRect.width - 8;
+          const minTop  = rect.top + 8;
+          const maxTop  = rect.bottom - 40;
+
+          newLeft = Math.min(Math.max(newLeft, minLeft), maxLeft);
+          newTop  = Math.min(Math.max(newTop,  minTop),  maxTop);
+
+          panel.style.left = (newLeft - rect.left) + "px";
+          panel.style.top  = (newTop  - rect.top)  + "px";
+          panel.style.bottom = "auto";
+        };
+
+        const onMouseUp = () => {
+          if (!isDragging) return;
+          isDragging = false;
+          document.removeEventListener("mousemove", onMouseMove);
+          document.removeEventListener("mouseup", onMouseUp);
+        };
+
+        header.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+
+          isDragging = true;
+
+          const rect = mapCol.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+
+          startX = e.clientX;
+          startY = e.clientY;
+          startLeft = panelRect.left;
+          startTop  = panelRect.top;
+
+          document.addEventListener("mousemove", onMouseMove);
+          document.addEventListener("mouseup", onMouseUp);
+        });
+      });
+    </script>
+
+    <!-- Replace "(asset)" with ? icon and wire info modal (with province summaries) -->
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        // 1) Strip "(asset)" from labels and append ? button
+        document.querySelectorAll(".layer-label").forEach(function (el) {
+          const original = (el.textContent || "").trim();
+          const suffix = " (asset)";
+          if (!original.endsWith(suffix)) return;
+
+          const baseLabel = original.slice(0, -suffix.length);
+          el.textContent = baseLabel;
+
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "layer-asset-info-btn";
+          btn.innerHTML = '<i class="bi bi-question-circle-fill"></i>';
+          btn.dataset.layerLabel = baseLabel;
+          el.after(btn);
+        });
+
+        // 2) Modal wiring
+        const modalEl = document.getElementById("layerInfoModal");
+        const titleEl = document.getElementById("layerInfoModalLabel");
+        const bodyEl  = document.getElementById("layerInfoModalBody");
+
+        if (!modalEl || !titleEl || !bodyEl || !window.bootstrap) return;
+
+        const infoModal = new bootstrap.Modal(modalEl);
+
+        document.addEventListener("click", function (e) {
+          const btn = e.target.closest(".layer-asset-info-btn");
+          if (!btn) return;
+
+          const label = btn.dataset.layerLabel || "Layer";
+          const lower = label.toLowerCase();
+
+          titleEl.textContent = label + " layer";
+
+          // ---- MANICALAND ----
+          if (lower.includes("manicaland")) {
+            bodyEl.innerHTML = `
+              <p><strong>Suitability snapshot – Manicaland</strong></p>
+              <ul class="mb-2">
+                <li>Highly suitable: <strong>3.4%</strong> (Buhera &amp; Makoni)</li>
+                <li>Moderately suitable: <strong>42.9%</strong></li>
+              </ul>
+              <p class="mb-1">
+                <strong>Challenges</strong> – mountainous terrain, despite abundant seasonal streams.
+              </p>
+              <p class="mb-0">
+                <strong>Recommendation</strong> – infrastructure for water transfer from mountain areas.
+              </p>
+            `;
+          }
+
+          // ---- MATABELELAND NORTH ----
+          else if (lower.includes("matabeleland north")) {
+            bodyEl.innerHTML = `
+              <p><strong>Suitability snapshot – Matabeleland North</strong></p>
+              <ul class="mb-2">
+                <li>Highly suitable: <strong>6.1%</strong></li>
+                <li>Moderately suitable: <strong>34.6%</strong></li>
+              </ul>
+              <p class="mb-1">
+                <strong>Major constraints</strong> – aridity, low soil fertility,
+                high wildlife activity, and flooding in specific districts (e.g. Tsholotsho).
+              </p>
+              <p class="mb-0">
+                <strong>Recommendation</strong> – revitalize existing irrigation schemes and address water scarcity issues.
+              </p>
+            `;
+          }
+
+          // ---- MATABELELAND SOUTH ----
+          else if (lower.includes("matabeleland south")) {
+            bodyEl.innerHTML = `
+              <p><strong>Suitability snapshot – Matabeleland South</strong></p>
+              <ul class="mb-2">
+                <li>Highly suitable: <strong>9.3%</strong> (Insiza district)</li>
+                <li>Moderately suitable: <strong>53.6%</strong></li>
+              </ul>
+              <p class="mb-1">
+                <strong>Challenges</strong> – competition for water resources with artisanal mining and recurrent drought.
+              </p>
+              <p class="mb-0">
+                <strong>Recommendation</strong> – promote groundwater harvesting from ephemeral rivers and
+                expand solar-powered water abstraction technologies.
+              </p>
+            `;
+          }
+
+          // ---- MASVINGO ----
+          else if (lower.includes("masvingo")) {
+            bodyEl.innerHTML = `
+              <p><strong>Suitability snapshot – Masvingo</strong></p>
+              <ul class="mb-2">
+                <li>Highly suitable: <strong>9.5%</strong> (Chivi, Gutu, Masvingo, Zaka)</li>
+                <li>Moderately suitable: <strong>48.5%</strong></li>
+              </ul>
+              <p class="mb-1">
+                <strong>Context</strong> – high potential area due to numerous dams under the Runde Catchment Authority.
+              </p>
+              <p class="mb-0">
+                <strong>Recommendation</strong> – scale up appropriate water abstraction infrastructure
+                investments to unlock this potential.
+              </p>
+            `;
+          }
+
+          // ---- DEFAULT FOR OTHER ASSET LAYERS ----
+          else {
+            bodyEl.innerHTML = `
+              <p>This layer is loaded from a Google Earth Engine asset.</p>
+              <p class="mb-0">
+                You can use it to explore irrigation schemes and overlay it with suitability maps.
+              </p>
+            `;
+          }
+
+          infoModal.show();
+        });
+      });
+    </script>
+
+    <!-- Loader hide: keep it visible at least ~2.6s -->
+    <script>
+      (function () {
+        const MIN_LOADER_MS = 2600;  // minimum time the loader stays visible
+        const startTime = Date.now();
+
+        function reallyHide() {
+          const el = document.getElementById("appLoader");
+          if (!el || el.classList.contains("app-loader-hidden")) return;
+
+          el.classList.add("app-loader-hidden");
+          setTimeout(() => {
+            if (el && el.parentNode) {
+              el.parentNode.removeChild(el);
+            }
+          }, 400); // allow fade-out
+        }
+
+        function hideAppLoader() {
+          const elapsed = Date.now() - startTime;
+          const remaining = MIN_LOADER_MS - elapsed;
+          if (remaining > 0) {
+            setTimeout(reallyHide, remaining);
+          } else {
+            reallyHide();
+          }
+        }
+
+        // When everything is loaded, start the hide logic
+        window.addEventListener("load", hideAppLoader);
+
+        // Safety fallback: hide anyway after MIN_LOADER_MS + 1s
+        setTimeout(hideAppLoader, MIN_LOADER_MS + 1000);
+      })();
+    </script>
+
+    <!-- App config + main JS -->
+    <script>
+      window.MAPVIEWER = {
+        geeMap: "/api/gee/map/",
+        geeBoundariesGeoJSON: "/api/gee/boundaries-geojson/",
+        geeAnalyze: "/api/gee/analyze/",
+        geeAnalyzeAdmin: "/api/gee/analyze-admin/",
+        geeBoundaryGeom: "/api/gee/boundary-geom/",
+        geeSocioGeoJSON: "/api/gee/socio-geojson/"
+      };
+    </script>
+    <script src="{% static 'mapviewer/map.js' %}"></script>
+  </body>
+</html>
