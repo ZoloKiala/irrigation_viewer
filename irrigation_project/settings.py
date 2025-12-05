@@ -156,9 +156,12 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Additional static dirs (optional global "static" folder)
-STATICFILES_DIRS = [
-    BASE_DIR / "static",
-]
+
+
+# If you don't have a global "static" folder, use this:
+STATICFILES_DIRS = []
+# or completely delete the STATICFILES_DIRS setting
+
 
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
