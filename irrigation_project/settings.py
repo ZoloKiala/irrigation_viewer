@@ -76,7 +76,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "config.urls"  # change `config` if your project folder has another name
+ROOT_URLCONF = "irrigation_viewer.urls"  # change `config` if your project folder has another name
+WSGI_APPLICATION = "irrigation_viewer.wsgi.application"
 
 # ------------------------------------------------------------------------------
 # Templates
