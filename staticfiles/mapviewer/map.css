@@ -1,0 +1,220 @@
+/* Make draw vertices pop over imagery */
+.maplibregl-canvas-container { cursor: crosshair; }
+
+/* Layout helpers */
+.mt-nav { margin-top: 56px; }
+.bg-panel { background: #0b1220; }
+.border-secondary-subtle { border-color: rgba(148,163,184,.18) !important; }
+.sidebar { max-height: calc(100vh - 56px); }
+.map-host { position: absolute; inset: 0; }
+
+/* Maplibre controls contrast on dark bg */
+.maplibregl-ctrl, .maplibregl-ctrl-group {
+  background: #ffffff; color: #111827; border-color: rgba(0,0,0,.1);
+}
+
+/* Simple geocoder control */
+.mlgl-geocoder { padding: 4px; }
+.mlgl-geocoder .mlgl-geocoder-inner {
+  display:flex; align-items:center; gap:6px; padding:4px; background:#fff;
+  border:1px solid rgba(0,0,0,.15); border-radius:6px;
+}
+.mlgl-geocoder input {
+  border:0; outline:0; width:180px; font: 13px system-ui, -apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+}
+.mlgl-geocoder .g-btn { border:0; background:transparent; padding:0; margin:0; cursor:pointer; }
+.mlgl-geocoder .g-icon { width:18px; height:18px; }
+
+/* North arrow control */
+.mlgl-northarrow { background:#fff; border:1px solid rgba(0,0,0,.15); border-radius:6px; padding:6px; }
+
+/* Legend */
+.legend {
+  position:absolute; right:12px; bottom:12px; z-index:5;
+  background:#ffffff; color:#111827; border:1px solid rgba(0,0,0,.15);
+  border-radius:8px; padding:8px 10px; min-width:180px;
+  box-shadow: 0 10px 30px rgba(2,6,23,.25);
+}
+.legend .title { font: 600 13px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin-bottom:6px; }
+.legend .item { display:flex; align-items:center; gap:8px; font-size:12px; margin:4px 0; }
+.legend .swatch { display:inline-block; width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,.25); }
+
+/* Fix map container height */
+#map { height: calc(100vh - 56px); width: 100%; }
+
+/* Accordion button contrast on dark sidebar */
+.accordion-button { background: #0b1220; color: #e5e7eb; }
+.accordion-button:not(.collapsed){ background:#111827; color:#fff; }
+.accordion-item { border-color: rgba(148,163,184,.18); }
+
+
+/* Dark-theme popup styling for MapLibre / Mapbox */
+.maplibregl-popup,
+.mapboxgl-popup {
+  z-index: 1000; /* make sure it's above other UI */
+}
+
+.maplibregl-popup-content,
+.mapboxgl-popup-content {
+  background-color: #020617;   /* dark slate */
+  color: #e5e7eb;              /* light text */
+  border-radius: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.6);
+  font-size: 0.8rem;
+}
+
+.maplibregl-popup-content .fw-semibold,
+.mapboxgl-popup-content .fw-semibold {
+  color: #f9fafb;              /* slightly brighter title */
+}
+
+.maplibregl-popup-tip,
+.mapboxgl-popup-tip {
+  border-top-color: #020617 !important;
+  border-bottom-color: #020617 !important;
+}
+
+/* Links inside popup, if any */
+.maplibregl-popup-content a,
+.mapboxgl-popup-content a {
+  color: #93c5fd;
+}
+
+/* --- Layer tree styling (ArcGIS-like) --- */
+.layer-tree {
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.layer-row {
+  cursor: default;
+}
+
+.layer-label {
+  flex: 1 1 auto;
+}
+
+.layer-group > .layer-row {
+  padding: 0.1rem 0;
+}
+
+.layer-leaf > .layer-row,
+.layer-leaf label.layer-row {
+  padding: 0.05rem 0;
+}
+
+/* caret / toggle button */
+.layer-toggle {
+  width: 1rem;
+  height: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.layer-toggle .caret-icon {
+  border-style: solid;
+  border-width: 0.25rem 0.25rem 0 0;
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  transform: rotate(45deg);
+  margin-bottom: 2px;
+  opacity: 0.7;
+}
+
+/* rotate caret when group is open */
+.layer-group.open > .layer-row .caret-icon {
+  transform: rotate(135deg);
+}
+
+/* little spacer to align leaf checkboxes */
+.tree-spacer {
+  display: inline-block;
+  width: 1rem;
+}
+
+/* dark theme integration */
+.layer-tree .form-check-input {
+  cursor: pointer;
+}
+.layer-tree .layer-label {
+  cursor: pointer;
+}
+
+/* Search widget width */
+.map-search {
+  position: absolute;
+  top: 70px;
+  left: 12px;
+  z-index: 10;
+  max-width: 260px;
+}
+
+/* Make icon buttons compact (not wide) */
+.map-search .btn-icon {
+  flex: 0 0 auto;        /* don't stretch */
+  padding: 0 0.45rem;    /* narrow left/right */
+}
+
+/* Let the input take the remaining space */
+.map-search .form-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Keep overall height small and neat */
+.map-search .input-group-sm > .form-control,
+.map-search .input-group-sm > .btn {
+  height: 32px;
+}
+
+
+/* Basemap switcher – top-right under nav controls */
+.map-basemaps {
+  position: absolute;
+  top: 120px;   /* a bit below the MapLibre nav control */
+  right: 12px;
+  z-index: 10;
+}
+
+/* Optional: tighter buttons */
+.map-basemaps .btn {
+  padding-inline: 0.5rem;
+}
+
+/* Legend styling */
+.legend{
+  color: #f9fafb;              /* white text */
+  font-size: .78rem;
+}
+
+.legend-title{
+  font-weight: 600;
+  margin-bottom: .25rem;
+}
+
+.legend-item{
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+.legend-color{
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(15,23,42,.8);
+  flex-shrink: 0;
+}
+
+.attribute-row-selected {
+  background-color: rgba(59,130,246,.35) !important;
+}
+
+
+/* .attribute-table-row.is-selected {
+  background-color: rgba(250, 204, 21, 0.2) !important;
+} */
