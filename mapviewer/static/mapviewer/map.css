@@ -861,4 +861,9 @@ body{
   letter-spacing: .04em;
 }
 
+.popup-actions .btn {
+  white-space: nowrap;
+}
+
+
 
