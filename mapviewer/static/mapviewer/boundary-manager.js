@@ -106,37 +106,80 @@
       return info.features[idx] || renderedFeature;
     }
 
-    _featuresToBoundaryLines(features) {
-      const lines = [];
-      const addRing = (feature, ring) => {
-        if (!Array.isArray(ring) || ring.length < 2) return;
-        lines.push({
-          type: "Feature",
-          properties: feature.properties || {},
-          geometry: {
-            type: "LineString",
-            coordinates: ring,
-          },
-        });
-      };
+    _normalizeBoundaryGeometry(geometry) {
+      if (!geometry) return geometry;
+      const polygons = [];
 
-      (features || []).forEach((feature) => {
-        const geom = feature && feature.geometry;
+      const walk = (geom) => {
         if (!geom) return;
         if (geom.type === "Polygon") {
-          geom.coordinates.forEach((ring) => addRing(feature, ring));
+          polygons.push(geom.coordinates);
         } else if (geom.type === "MultiPolygon") {
-          geom.coordinates.forEach((polygon) => {
-            polygon.forEach((ring) => addRing(feature, ring));
-          });
-        } else if (geom.type === "LineString" || geom.type === "MultiLineString") {
-          lines.push(feature);
+          (geom.coordinates || []).forEach((polygon) => polygons.push(polygon));
+        } else if (geom.type === "GeometryCollection") {
+          (geom.geometries || []).forEach(walk);
         }
+      };
+
+      walk(geometry);
+
+      if (!polygons.length) return geometry;
+      return polygons.length === 1
+        ? { type: "Polygon", coordinates: polygons[0] }
+        : { type: "MultiPolygon", coordinates: polygons };
+    }
+
+    _geometryToBoundaryLines(geometry) {
+      const lines = [];
+      const addRing = (ring) => {
+        if (!Array.isArray(ring) || ring.length < 2) return;
+        lines.push(ring);
+      };
+
+      const walk = (geom) => {
+        if (!geom) return;
+        if (geom.type === "Polygon") {
+          (geom.coordinates || []).forEach(addRing);
+        } else if (geom.type === "MultiPolygon") {
+          (geom.coordinates || []).forEach((polygon) => {
+            polygon.forEach(addRing);
+          });
+        } else if (geom.type === "LineString") {
+          if (Array.isArray(geom.coordinates) && geom.coordinates.length > 1) {
+            lines.push(geom.coordinates);
+          }
+        } else if (geom.type === "MultiLineString") {
+          (geom.coordinates || []).forEach((line) => {
+            if (Array.isArray(line) && line.length > 1) lines.push(line);
+          });
+        } else if (geom.type === "GeometryCollection") {
+          (geom.geometries || []).forEach(walk);
+        }
+      };
+
+      walk(geometry);
+      return lines;
+    }
+
+    _featuresToBoundaryLines(features) {
+      const lineFeatures = [];
+
+      (features || []).forEach((feature) => {
+        this._geometryToBoundaryLines(feature && feature.geometry).forEach((line) => {
+          lineFeatures.push({
+            type: "Feature",
+            properties: feature.properties || {},
+            geometry: {
+              type: "LineString",
+              coordinates: line,
+            },
+          });
+        });
       });
 
       return {
         type: "FeatureCollection",
-        features: lines,
+        features: lineFeatures,
       };
     }
 
@@ -210,6 +253,7 @@
           const props = (f && f.properties) || {};
           return {
             ...f,
+            geometry: this._normalizeBoundaryGeometry(f && f.geometry),
             properties: {
               ...props,
               __idx: idx,
@@ -236,7 +280,6 @@
           id: fillId,
           type: "fill",
           source: sourceId,
-          filter: ["==", "$type", "Polygon"],
           paint: {
             "fill-color": "#ffffff",
             "fill-opacity": 0.01,
