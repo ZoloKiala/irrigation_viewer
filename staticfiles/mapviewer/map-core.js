@@ -179,6 +179,72 @@
   }
 
   // ------------------------- HIGHLIGHT HELPERS -------------------------
+  function dissolveHighlightFeature(feature) {
+    if (
+      !feature ||
+      !feature.geometry ||
+      feature.geometry.type !== "MultiPolygon" ||
+      !Array.isArray(feature.geometry.coordinates) ||
+      feature.geometry.coordinates.length < 2 ||
+      typeof turf === "undefined" ||
+      typeof turf.polygon !== "function" ||
+      typeof turf.union !== "function"
+    ) {
+      return feature;
+    }
+
+    try {
+      const props = feature.properties || {};
+      const parts = feature.geometry.coordinates.map((coords) =>
+        turf.polygon(coords, props)
+      );
+      let dissolved = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        dissolved = turf.union(dissolved, parts[i]) || dissolved;
+      }
+      return {
+        ...dissolved,
+        id: feature.id,
+        properties: props,
+      };
+    } catch (err) {
+      console.warn("Could not dissolve highlight multipolygon", err);
+      return feature;
+    }
+  }
+
+  function polygonFeatureToLineFeature(feature) {
+    if (!feature || !feature.geometry) return feature;
+    const geom = feature.geometry;
+    if (geom.type !== "Polygon" && geom.type !== "MultiPolygon") {
+      return feature;
+    }
+
+    const lines = [];
+    const addRing = (ring) => {
+      if (Array.isArray(ring) && ring.length > 1) {
+        lines.push(ring);
+      }
+    };
+
+    if (geom.type === "Polygon") {
+      geom.coordinates.forEach(addRing);
+    } else {
+      geom.coordinates.forEach((polygon) => polygon.forEach(addRing));
+    }
+
+    if (!lines.length) return feature;
+
+    return {
+      type: "Feature",
+      id: feature.id,
+      properties: feature.properties || {},
+      geometry: lines.length === 1
+        ? { type: "LineString", coordinates: lines[0] }
+        : { type: "MultiLineString", coordinates: lines },
+    };
+  }
+
   function setHighlight(feature) {
     const map = API.map;
     if (!map || !map.getSource(H_SRC)) return;
@@ -189,9 +255,12 @@
       });
       return;
     }
+    const displayFeature = polygonFeatureToLineFeature(
+      dissolveHighlightFeature(feature)
+    );
     const fc = {
       type: "FeatureCollection",
-      features: [feature],
+      features: [displayFeature],
     };
     map.getSource(H_SRC).setData(fc);
 
@@ -344,6 +413,18 @@
   }
 
   // ------------------------- RASTER (SUITABILITY) -------------------------
+  function normalizeRasterBounds(bounds) {
+    if (!bounds) return null;
+    const west = Number(bounds.west);
+    const south = Number(bounds.south);
+    const east = Number(bounds.east);
+    const north = Number(bounds.north);
+    if (![west, south, east, north].every(Number.isFinite)) return null;
+    if (west < -180 || east > 180 || south < -90 || north > 90) return null;
+    if (west >= east || south >= north) return null;
+    return { west, south, east, north };
+  }
+
   function removeMapLayer(id) {
     const map = API.map;
     if (!map || !id) return;
@@ -395,15 +476,21 @@
       }
 
       const tileUrl = data.tile_url;
+      const bounds = normalizeRasterBounds(data.bounds);
       rasterMetaById[id] = {
-        bounds: data.bounds || null,
+        bounds,
       };
 
-      map.addSource(id, {
+      const sourceConfig = {
         type: "raster",
         tiles: [tileUrl],
         tileSize: 256,
-      });
+        maxzoom: 7,
+      };
+      if (bounds) {
+        sourceConfig.bounds = [bounds.west, bounds.south, bounds.east, bounds.north];
+      }
+      map.addSource(id, sourceConfig);
 
       map.addLayer({
         id,
@@ -420,7 +507,6 @@
       map.on("sourcedata", onSourceData);
 
       if (isSuitability && analysisManager) {
-        const bounds = data.bounds || null;
         analysisManager.setSuitability({ id, dataset, label }, bounds);
 
         if (bounds) {
@@ -430,7 +516,7 @@
               [b.west, b.south],
               [b.east, b.north],
             ],
-            { padding: 40, duration: 800 }
+            { padding: 40, duration: 800, maxZoom: 7 }
           );
         }
 
@@ -444,7 +530,8 @@
     } catch (err) {
       console.error("Failed to add raster layer", err);
       hideMapSpinner();
-      setStatus("Failed to load tiles from Earth Engine.", true);
+      const detail = err && err.message ? ` ${err.message}` : "";
+      setStatus(`Failed to load tiles from Earth Engine.${detail}`, true);
     }
   }
 

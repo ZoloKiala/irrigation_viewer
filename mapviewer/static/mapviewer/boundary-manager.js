@@ -5,6 +5,10 @@
 
   const API = window.MAPVIEWER || (window.MAPVIEWER = {});
 
+  // Translation helper — falls back to the English string if ivT() isn't loaded yet.
+  const _t = (key, fallback) =>
+    typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
+
   class BoundaryManager {
     constructor(options) {
       this.map = options.map;
@@ -25,20 +29,138 @@
         options.getLastSocioClickTime || API.getLastSocioClickTime;
 
       this.boundaryLayerData = {}; // by layerId
+
+      // Track the currently-open boundary popup so we can re-render its
+      // text when the user switches languages.
+      this._activePopup = null;
+      this._activePopupCtx = null;
+
+      document.addEventListener("iv:languagechange", () => {
+        if (!this._activePopup || !this._activePopupCtx) return;
+        const { feature, name } = this._activePopupCtx;
+        this._activePopup.setHTML(this._buildBoundaryPopupHtml(name));
+        // setHTML replaces the inner DOM, so click handlers must be re-bound.
+        this._attachBoundaryPopupHandlers(this._activePopup, feature, name);
+      });
+    }
+
+    _buildBoundaryPopupHtml(name) {
+      const _t = (k, fb) =>
+        (typeof window.ivT === "function" ? window.ivT(k, fb) : fb);
+      return `
+        <div class="small popup-body">
+          <div class="fw-semibold mb-1">${name}</div>
+          <div class="mb-2">
+            Use the attribute panel to explore full attributes.
+          </div>
+          <div class="mt-1">
+            <label class="form-label form-label-sm mb-1">Analysis type</label>
+            <div class="d-flex align-items-center gap-2">
+              <select id="boundaryAnalysisTypeSelect"
+                      class="form-select form-select-sm">
+                <option value="soil" selected>${_t("popup_analysis_type_soil", "Irrigation suitability (area)")}</option>
+                <option value="socio">${_t("popup_analysis_type_socio", "Irrigation Investment suitability")}</option>
+              </select>
+              <button id="boundaryAnalyzeBtn" type="button"
+                      class="btn btn-primary btn-sm">
+                ${_t("popup_run_analysis", "Run analysis")}
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    _attachBoundaryPopupHandlers(popup, feature, name) {
+      setTimeout(() => {
+        const btn = document.getElementById("boundaryAnalyzeBtn");
+        const select = document.getElementById("boundaryAnalysisTypeSelect");
+        if (!btn) return;
+
+        btn.addEventListener("click", () => {
+          if (!this.analysisManager.currentSuitability) {
+            this.setStatus(_t("status_select_suit", "Select a suitability map first."), true);
+            return;
+          }
+          const mode = select ? (select.value || "soil") : "soil";
+          this.analysisManager.runBoundaryAnalysis(feature, name, mode);
+          popup.remove();
+        });
+      }, 0);
+    }
+
+    _featureIndex(feature) {
+      const rawIdx = feature && feature.properties
+        ? feature.properties.__idx
+        : null;
+      const idx = Number(rawIdx);
+      return Number.isInteger(idx) && idx >= 0 ? idx : null;
+    }
+
+    _fullFeatureFromRenderedFeature(renderedFeature, layerId) {
+      const info = this.boundaryLayerData[layerId];
+      const idx = this._featureIndex(renderedFeature);
+      if (idx === null || !info || !Array.isArray(info.features)) {
+        return renderedFeature;
+      }
+      return info.features[idx] || renderedFeature;
+    }
+
+    _featuresToBoundaryLines(features) {
+      const lines = [];
+      const addRing = (feature, ring) => {
+        if (!Array.isArray(ring) || ring.length < 2) return;
+        lines.push({
+          type: "Feature",
+          properties: feature.properties || {},
+          geometry: {
+            type: "LineString",
+            coordinates: ring,
+          },
+        });
+      };
+
+      (features || []).forEach((feature) => {
+        const geom = feature && feature.geometry;
+        if (!geom) return;
+        if (geom.type === "Polygon") {
+          geom.coordinates.forEach((ring) => addRing(feature, ring));
+        } else if (geom.type === "MultiPolygon") {
+          geom.coordinates.forEach((polygon) => {
+            polygon.forEach((ring) => addRing(feature, ring));
+          });
+        } else if (geom.type === "LineString" || geom.type === "MultiLineString") {
+          lines.push(feature);
+        }
+      });
+
+      return {
+        type: "FeatureCollection",
+        features: lines,
+      };
     }
 
     async addBoundaryVectorLayer(dataset, id, label) {
       if (!this.map || !dataset || !id) return;
 
+      // Parse the BOUNDARY_<ISO>_L<level> sentinel into its parts.
       let level = 1;
+      let countryIso = "ZWE";
       try {
-        const match = dataset.match(/_L(\d+)/);
-        level = match ? parseInt(match[1], 10) || 1 : 1;
+        const m = dataset.match(/^BOUNDARY_([A-Z]+)_L(\d+)/);
+        if (m) {
+          countryIso = m[1];
+          level = parseInt(m[2], 10) || 1;
+        } else {
+          const lvlOnly = dataset.match(/_L(\d+)/);
+          level = lvlOnly ? parseInt(lvlOnly[1], 10) || 1 : 1;
+        }
       } catch (e) {
         level = 1;
       }
 
       const sourceId = `${id}_src`;
+      const lineSourceId = `${id}_line_src`;
       const fillId = `${id}_fill`;
       const lineId = `${id}_line`;
 
@@ -58,10 +180,13 @@
       }
 
       try {
-        this.setStatus("Loading boundary polygons…", false);
-        API.showMapSpinner("Loading boundary polygons…");
+        const loadingMsg = _t("status_loading_boundaries", "Loading boundary polygons…");
+        this.setStatus(loadingMsg, false);
+        API.showMapSpinner(loadingMsg);
 
-        const resp = await fetch(`${this.geeBoundariesUrl}?level=${level}`);
+        const resp = await fetch(
+          `${this.geeBoundariesUrl}?level=${level}&country_iso=${encodeURIComponent(countryIso)}`
+        );
 
         if (!resp.ok) {
           const txt = await resp.text();
@@ -102,6 +227,11 @@
           data: fc,
         });
 
+        this.map.addSource(lineSourceId, {
+          type: "geojson",
+          data: this._featuresToBoundaryLines(features),
+        });
+
         this.map.addLayer({
           id: fillId,
           type: "fill",
@@ -116,7 +246,7 @@
         this.map.addLayer({
           id: lineId,
           type: "line",
-          source: sourceId,
+          source: lineSourceId,
           paint: {
             "line-color": "#000000",
             "line-width": 1.5,
@@ -128,6 +258,7 @@
         this.boundaryLayerData[id] = {
           label,
           sourceId,
+          lineSourceId,
           fillId,
           lineId,
           features,
@@ -150,7 +281,7 @@
       } catch (err) {
         console.error("Failed to add boundary vector layer", err);
         API.hideMapSpinner();
-        this.setStatus("Error loading boundary polygons.", true);
+        this.setStatus(_t("status_boundaries_error", "Error loading boundary polygons."), true);
       }
     }
 
@@ -158,12 +289,16 @@
       if (!this.map || !id) return;
       const info = this.boundaryLayerData[id];
       const sourceId = info ? info.sourceId : `${id}_src`;
+      const lineSourceId = info ? info.lineSourceId : `${id}_line_src`;
       const fillId = info ? info.fillId : `${id}_fill`;
       const lineId = info ? info.lineId : `${id}_line`;
 
       if (this.map.getLayer(fillId)) this.map.removeLayer(fillId);
       if (this.map.getLayer(lineId)) this.map.removeLayer(lineId);
       if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+      if (lineSourceId !== sourceId && this.map.getSource(lineSourceId)) {
+        this.map.removeSource(lineSourceId);
+      }
 
       delete this.boundaryLayerData[id];
 
@@ -241,9 +376,11 @@
                      placeholder="Search…"
                      data-target-table="${tableId}">
               <button type="button"
-                      class="btn btn-outline-light btn-sm py-0 px-2"
-                      data-zoom-layer-id="${layerId}">
-                Zoom all
+                      class="attribute-zoom-btn"
+                      data-zoom-layer-id="${layerId}"
+                      title="Zoom to all features"
+                      aria-label="Zoom to all features">
+                <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
               </button>
             </div>
           </div>
@@ -355,17 +492,15 @@
       try {
         if (!e.features || !e.features.length) return;
 
-        const feature = e.features[0];
+        const renderedFeature = e.features[0];
+        const feature = this._fullFeatureFromRenderedFeature(renderedFeature, layerId);
         this.analysisManager.currentBoundaryFeature = feature;
         this.highlight(feature);
         API.updateLayerZOrder();
 
         const info = this.boundaryLayerData[layerId];
         if (info && info.features && info.features.length) {
-          const idx =
-            feature.properties && typeof feature.properties.__idx === "number"
-              ? feature.properties.__idx
-              : null;
+          const idx = this._featureIndex(feature);
           this.ensureAttributePanelVisible();
           this.renderBoundaryAttributeTableForLayer(
             layerId,
@@ -384,58 +519,24 @@
           props.name ||
           "Boundary";
 
-        // 🔹 Popup with inline dropdown + button
-        const html = `
-          <div class="small popup-body">
-            <div class="fw-semibold mb-1">${name}</div>
-            <div class="mb-2">
-              Use the attribute panel to explore full attributes.
-            </div>
-            <div class="mt-1">
-              <label class="form-label form-label-sm mb-1">Analysis type</label>
-              <div class="d-flex align-items-center gap-2">
-                <select id="boundaryAnalysisTypeSelect"
-                        class="form-select form-select-sm">
-                  <option value="soil" selected>Irrigation suitability (area)</option>
-                  <option value="socio">Irrigation Investment suitability </option>
-                </select>
-                <button id="boundaryAnalyzeBtn" type="button"
-                        class="btn btn-primary btn-sm">
-                  Run analysis
-                </button>
-              </div>
-            </div>
-          </div>
-        ”
-
-        `;
-
         const popup = new maplibregl.Popup({
           closeButton: true,
           closeOnClick: true,
         })
           .setLngLat(e.lngLat)
-          .setHTML(html)
+          .setHTML(this._buildBoundaryPopupHtml(name))
           .addTo(this.map);
 
-        setTimeout(() => {
-          const btn = document.getElementById("boundaryAnalyzeBtn");
-          const select = document.getElementById("boundaryAnalysisTypeSelect");
-          if (!btn) return;
+        this._activePopup = popup;
+        this._activePopupCtx = { feature, name };
+        popup.on("close", () => {
+          if (this._activePopup === popup) {
+            this._activePopup = null;
+            this._activePopupCtx = null;
+          }
+        });
 
-          btn.addEventListener("click", () => {
-            if (!this.analysisManager.currentSuitability) {
-              this.setStatus("Select a suitability map first.", true);
-              return;
-            }
-
-            // Read mode from the popup dropdown; default to "soil"
-            const mode = select ? (select.value || "soil") : "soil";
-
-            this.analysisManager.runBoundaryAnalysis(feature, name, mode);
-            popup.remove();
-          });
-        }, 0);
+        this._attachBoundaryPopupHandlers(popup, feature, name);
       } catch (err) {
         console.error("onBoundaryClick failed", err);
       }

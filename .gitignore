@@ -1,3 +1,11 @@
 irrigation/
 .venv/
 venv/
+
+# Local secrets and runtime state
+tethys-app-1-*.json
+.env
+.env.*
+*.sqlite3
+__pycache__/
+*.py[cod]

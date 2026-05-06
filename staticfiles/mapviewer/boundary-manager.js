@@ -27,6 +27,57 @@
       this.boundaryLayerData = {}; // by layerId
     }
 
+    _featureIndex(feature) {
+      const rawIdx = feature && feature.properties
+        ? feature.properties.__idx
+        : null;
+      const idx = Number(rawIdx);
+      return Number.isInteger(idx) && idx >= 0 ? idx : null;
+    }
+
+    _fullFeatureFromRenderedFeature(renderedFeature, layerId) {
+      const info = this.boundaryLayerData[layerId];
+      const idx = this._featureIndex(renderedFeature);
+      if (idx === null || !info || !Array.isArray(info.features)) {
+        return renderedFeature;
+      }
+      return info.features[idx] || renderedFeature;
+    }
+
+    _featuresToBoundaryLines(features) {
+      const lines = [];
+      const addRing = (feature, ring) => {
+        if (!Array.isArray(ring) || ring.length < 2) return;
+        lines.push({
+          type: "Feature",
+          properties: feature.properties || {},
+          geometry: {
+            type: "LineString",
+            coordinates: ring,
+          },
+        });
+      };
+
+      (features || []).forEach((feature) => {
+        const geom = feature && feature.geometry;
+        if (!geom) return;
+        if (geom.type === "Polygon") {
+          geom.coordinates.forEach((ring) => addRing(feature, ring));
+        } else if (geom.type === "MultiPolygon") {
+          geom.coordinates.forEach((polygon) => {
+            polygon.forEach((ring) => addRing(feature, ring));
+          });
+        } else if (geom.type === "LineString" || geom.type === "MultiLineString") {
+          lines.push(feature);
+        }
+      });
+
+      return {
+        type: "FeatureCollection",
+        features: lines,
+      };
+    }
+
     async addBoundaryVectorLayer(dataset, id, label) {
       if (!this.map || !dataset || !id) return;
 
@@ -39,6 +90,7 @@
       }
 
       const sourceId = `${id}_src`;
+      const lineSourceId = `${id}_line_src`;
       const fillId = `${id}_fill`;
       const lineId = `${id}_line`;
 
@@ -96,6 +148,11 @@
           data: fc,
         });
 
+        this.map.addSource(lineSourceId, {
+          type: "geojson",
+          data: this._featuresToBoundaryLines(features),
+        });
+
         this.map.addLayer({
           id: fillId,
           type: "fill",
@@ -110,7 +167,7 @@
         this.map.addLayer({
           id: lineId,
           type: "line",
-          source: sourceId,
+          source: lineSourceId,
           paint: {
             "line-color": "#000000",
             "line-width": 1.5,
@@ -122,6 +179,7 @@
         this.boundaryLayerData[id] = {
           label,
           sourceId,
+          lineSourceId,
           fillId,
           lineId,
           features,
@@ -152,12 +210,16 @@
       if (!this.map || !id) return;
       const info = this.boundaryLayerData[id];
       const sourceId = info ? info.sourceId : `${id}_src`;
+      const lineSourceId = info ? info.lineSourceId : `${id}_line_src`;
       const fillId = info ? info.fillId : `${id}_fill`;
       const lineId = info ? info.lineId : `${id}_line`;
 
       if (this.map.getLayer(fillId)) this.map.removeLayer(fillId);
       if (this.map.getLayer(lineId)) this.map.removeLayer(lineId);
       if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+      if (lineSourceId !== sourceId && this.map.getSource(lineSourceId)) {
+        this.map.removeSource(lineSourceId);
+      }
 
       delete this.boundaryLayerData[id];
 
@@ -348,17 +410,15 @@
       try {
         if (!e.features || !e.features.length) return;
 
-        const feature = e.features[0];
+        const renderedFeature = e.features[0];
+        const feature = this._fullFeatureFromRenderedFeature(renderedFeature, layerId);
         this.analysisManager.currentBoundaryFeature = feature;
         this.highlight(feature);
         API.updateLayerZOrder();
 
         const info = this.boundaryLayerData[layerId];
         if (info && info.features && info.features.length) {
-          const idx =
-            feature.properties && typeof feature.properties.__idx === "number"
-              ? feature.properties.__idx
-              : null;
+          const idx = this._featureIndex(feature);
           this.ensureAttributePanelVisible();
           this.renderBoundaryAttributeTableForLayer(
             layerId,

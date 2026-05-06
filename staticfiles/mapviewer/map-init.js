@@ -32,6 +32,18 @@
     window.map = map; // optional external access
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    map.on("error", (e) => {
+      const err = e && e.error ? e.error : null;
+      const msg = err ? String(err.message || err) : "";
+      const status = err && (err.status || err.statusCode);
+      if (status === 429 || /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msg)) {
+        if (API.hideMapSpinner) API.hideMapSpinner();
+        API.setStatus(
+          "Earth Engine quota/rate limit hit. Wait a minute, then turn the layer on again.",
+          true
+        );
+      }
+    });
 
     let draw = null;
     if (typeof MapboxDraw !== "undefined") {
@@ -244,6 +256,23 @@
     map.on("error", (e) => {
       if (!e || !e.error || !e.error.url) return;
       console.error("Map error", e);
+      const err = e.error;
+      const msgText = String(err.message || err || "");
+      const isEarthEngineTile =
+        /earthengine\.googleapis\.com/i.test(String(err.url || "")) ||
+        /earthengine/i.test(msgText);
+      const isRateLimit =
+        err.status === 429 ||
+        err.statusCode === 429 ||
+        /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msgText);
+      if (isEarthEngineTile && isRateLimit) {
+        API.setStatus(
+          "Earth Engine quota/rate limit hit. Wait a minute, then turn the layer on again.",
+          true
+        );
+        API.hideMapSpinner();
+        return;
+      }
       const msg = `Tile error: ${e.error.message || ""}`;
       API.setStatus(msg, true);
       API.hideMapSpinner();

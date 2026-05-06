@@ -6,6 +6,10 @@
   const API = window.MAPVIEWER || {};
   window.MAPVIEWER = API;
 
+  // Translation helper — falls back to the English string if ivT() isn't loaded yet.
+  const _t = (key, fallback) =>
+    typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
+
   // ------------------------- DOM ELEMENTS -------------------------
   const mapEl = document.getElementById("map");
   const legendEl = document.getElementById("legend");
@@ -112,32 +116,39 @@
 
   function setActiveLayer(info) {
     if (!activeLayerEl) return;
+    const wrapper = activeLayerEl.closest(".nav-status");
     if (!info) {
       activeLayerEl.textContent = "none";
+      if (wrapper) wrapper.classList.remove("nav-status--on");
       return;
     }
     activeLayerEl.textContent = info.label || info.dataset || "active";
+    if (wrapper) wrapper.classList.add("nav-status--on");
   }
 
   function showLegend() {
     if (!legendEl) return;
+    // Pull live palette so it tracks the Tweaks panel's palette tile.
+    const p = window.IV_SUIT_PALETTE || {
+      N: "#f1e5cd", S1: "#166534", S2: "#22c55e", S3: "#fde047",
+    };
     legendEl.style.display = "block";
     legendEl.innerHTML = `
       <div class="legend-title">Suitability</div>
       <div class="legend-item">
-        <span class="legend-color" style="background:#f1e5cd;"></span>
+        <span class="legend-color" style="background:${p.N};"></span>
         <span>N</span>
       </div>
       <div class="legend-item">
-        <span class="legend-color" style="background:#166534;"></span>
+        <span class="legend-color" style="background:${p.S1};"></span>
         <span>S1</span>
       </div>
       <div class="legend-item">
-        <span class="legend-color" style="background:#22c55e;"></span>
+        <span class="legend-color" style="background:${p.S2};"></span>
         <span>S2</span>
       </div>
       <div class="legend-item">
-        <span class="legend-color" style="background:#fde047;"></span>
+        <span class="legend-color" style="background:${p.S3};"></span>
         <span>S3</span>
       </div>
     `;
@@ -179,6 +190,72 @@
   }
 
   // ------------------------- HIGHLIGHT HELPERS -------------------------
+  function dissolveHighlightFeature(feature) {
+    if (
+      !feature ||
+      !feature.geometry ||
+      feature.geometry.type !== "MultiPolygon" ||
+      !Array.isArray(feature.geometry.coordinates) ||
+      feature.geometry.coordinates.length < 2 ||
+      typeof turf === "undefined" ||
+      typeof turf.polygon !== "function" ||
+      typeof turf.union !== "function"
+    ) {
+      return feature;
+    }
+
+    try {
+      const props = feature.properties || {};
+      const parts = feature.geometry.coordinates.map((coords) =>
+        turf.polygon(coords, props)
+      );
+      let dissolved = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        dissolved = turf.union(dissolved, parts[i]) || dissolved;
+      }
+      return {
+        ...dissolved,
+        id: feature.id,
+        properties: props,
+      };
+    } catch (err) {
+      console.warn("Could not dissolve highlight multipolygon", err);
+      return feature;
+    }
+  }
+
+  function polygonFeatureToLineFeature(feature) {
+    if (!feature || !feature.geometry) return feature;
+    const geom = feature.geometry;
+    if (geom.type !== "Polygon" && geom.type !== "MultiPolygon") {
+      return feature;
+    }
+
+    const lines = [];
+    const addRing = (ring) => {
+      if (Array.isArray(ring) && ring.length > 1) {
+        lines.push(ring);
+      }
+    };
+
+    if (geom.type === "Polygon") {
+      geom.coordinates.forEach(addRing);
+    } else {
+      geom.coordinates.forEach((polygon) => polygon.forEach(addRing));
+    }
+
+    if (!lines.length) return feature;
+
+    return {
+      type: "Feature",
+      id: feature.id,
+      properties: feature.properties || {},
+      geometry: lines.length === 1
+        ? { type: "LineString", coordinates: lines[0] }
+        : { type: "MultiLineString", coordinates: lines },
+    };
+  }
+
   function setHighlight(feature) {
     const map = API.map;
     if (!map || !map.getSource(H_SRC)) return;
@@ -189,9 +266,12 @@
       });
       return;
     }
+    const displayFeature = polygonFeatureToLineFeature(
+      dissolveHighlightFeature(feature)
+    );
     const fc = {
       type: "FeatureCollection",
-      features: [feature],
+      features: [displayFeature],
     };
     map.getSource(H_SRC).setData(fc);
 
@@ -325,7 +405,14 @@
         bid === id ? "visible" : "none"
       );
     });
+    // Let other UIs (Tweaks panel, etc.) sync their selected state.
+    document.dispatchEvent(
+      new CustomEvent("iv:basemap-changed", { detail: { id } })
+    );
   }
+
+  // Expose current basemap id so panels can read initial state.
+  API.getCurrentBasemapId = () => currentBasemapId;
 
   function attachBasemapSwitcher() {
     if (!basemapSwitcher) return;
@@ -344,6 +431,18 @@
   }
 
   // ------------------------- RASTER (SUITABILITY) -------------------------
+  function normalizeRasterBounds(bounds) {
+    if (!bounds) return null;
+    const west = Number(bounds.west);
+    const south = Number(bounds.south);
+    const east = Number(bounds.east);
+    const north = Number(bounds.north);
+    if (![west, south, east, north].every(Number.isFinite)) return null;
+    if (west < -180 || east > 180 || south < -90 || north > 90) return null;
+    if (west >= east || south >= north) return null;
+    return { west, south, east, north };
+  }
+
   function removeMapLayer(id) {
     const map = API.map;
     if (!map || !id) return;
@@ -373,11 +472,19 @@
     }
 
     try {
-      setStatus("Loading map tiles…", false);
-      showMapSpinner("Loading map tiles…");
+      const loadingMsg = _t("status_loading_tiles", "Loading map tiles…");
+      setStatus(loadingMsg, false);
+      showMapSpinner(loadingMsg);
 
       const url = API.geeMap || "/api/gee/map/";
-      const resp = await fetch(`${url}?dataset=${encodeURIComponent(dataset)}`);
+      const palette =
+        (typeof window.IV_SUIT_PALETTE_NAME === "string" && window.IV_SUIT_PALETTE_NAME) ||
+        localStorage.getItem("iv:palette") ||
+        "verdant";
+      const resp = await fetch(
+        `${url}?dataset=${encodeURIComponent(dataset)}` +
+        `&palette=${encodeURIComponent(palette)}`
+      );
       if (!resp.ok) {
         const txt = await resp.text();
         console.error("gee_map HTTP error", resp.status, txt);
@@ -395,21 +502,32 @@
       }
 
       const tileUrl = data.tile_url;
+      const bounds = normalizeRasterBounds(data.bounds);
       rasterMetaById[id] = {
-        bounds: data.bounds || null,
+        bounds,
       };
 
-      map.addSource(id, {
+      const sourceConfig = {
         type: "raster",
         tiles: [tileUrl],
         tileSize: 256,
-      });
+        maxzoom: 7,
+      };
+      if (bounds) {
+        sourceConfig.bounds = [bounds.west, bounds.south, bounds.east, bounds.north];
+      }
+      map.addSource(id, sourceConfig);
 
       map.addLayer({
         id,
         type: "raster",
         source: id,
       });
+
+      // Let the tweaks panel re-apply its opacity to the new layer.
+      document.dispatchEvent(
+        new CustomEvent("iv:layer-added", { detail: { id, type: "raster" } })
+      );
 
       const onSourceData = (e) => {
         if (e.sourceId === id && e.sourceDataType === "content") {
@@ -420,7 +538,6 @@
       map.on("sourcedata", onSourceData);
 
       if (isSuitability && analysisManager) {
-        const bounds = data.bounds || null;
         analysisManager.setSuitability({ id, dataset, label }, bounds);
 
         if (bounds) {
@@ -430,7 +547,7 @@
               [b.west, b.south],
               [b.east, b.north],
             ],
-            { padding: 40, duration: 800 }
+            { padding: 40, duration: 800, maxZoom: 7 }
           );
         }
 
@@ -439,12 +556,16 @@
         );
       }
 
-      setStatus("Map loaded.", false);
+      setStatus(_t("status_map_loaded", "Map loaded."), false);
       updateLayerZOrder();
     } catch (err) {
       console.error("Failed to add raster layer", err);
       hideMapSpinner();
-      setStatus("Failed to load tiles from Earth Engine.", true);
+      const detail = err && err.message ? ` ${err.message}` : "";
+      setStatus(
+        `${_t("status_tiles_failed", "Failed to load tiles from Earth Engine.")}${detail}`,
+        true
+      );
     }
   }
 
@@ -518,7 +639,7 @@
 
       if (mode === "select") {
         draw.changeMode("simple_select");
-        setStatus("Pan the map or select existing shapes.", false);
+        setStatus(_t("status_pan_or_select", "Pan the map or select existing shapes."), false);
         return;
       }
 
@@ -536,7 +657,7 @@
         if (fc && fc.features && fc.features.length) {
           draw.deleteAll();
         }
-        setStatus("All drawn shapes cleared.", false);
+        setStatus(_t("status_shapes_cleared", "All drawn shapes cleared."), false);
         analysisManager.resetForDrawDelete();
         clearHighlight();
 
@@ -570,12 +691,12 @@
             }
           );
           if (!resp.ok) {
-            setStatus("Location search failed.", true);
+            setStatus(_t("status_search_failed", "Location search failed."), true);
             return;
           }
           const results = await resp.json();
           if (!results.length) {
-            setStatus("No results for that place.", true);
+            setStatus(_t("status_search_no_results", "No results for that place."), true);
             return;
           }
           const r = results[0];
@@ -585,7 +706,7 @@
           setStatus(`Centered on ${r.display_name}`, false);
         } catch (err) {
           console.error("Search error", err);
-          setStatus("Search error.", true);
+          setStatus(_t("status_search_error", "Search error."), true);
         }
       };
 
@@ -601,22 +722,22 @@
     if (locateBtn) {
       locateBtn.addEventListener("click", () => {
         if (!navigator.geolocation) {
-          setStatus("Geolocation not supported in this browser.", true);
+          setStatus(_t("status_geo_unsupported", "Geolocation not supported in this browser."), true);
           return;
         }
-        setStatus("Locating…", false);
+        setStatus(_t("status_locating", "Locating…"), false);
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             const { latitude, longitude } = pos.coords;
             map.flyTo({ center: [longitude, latitude], zoom: 12 });
-            setStatus("Centered on your location.", false);
+            setStatus(_t("status_centered_on_loc", "Centered on your location."), false);
           },
           (err) => {
             console.error("Geolocation error", err);
             if (err.code === 1) {
-              setStatus("Location permission denied.", true);
+              setStatus(_t("status_geo_denied", "Location permission denied."), true);
             } else {
-              setStatus("Could not get your location.", true);
+              setStatus(_t("status_geo_unavailable", "Could not get your location."), true);
             }
           },
           {
@@ -651,23 +772,20 @@
         const selectedCountry = getCurrentCountry();
         const isZimbabwe = selectedCountry === "Zimbabwe";
 
-        // Only Zimbabwe has data for now. For South Africa & Angola keep UI empty.
-        // Allow turning OFF, but block turning ON outside Zimbabwe.
-        if (!isZimbabwe && isTurningOn) {
+        // Block suitability + socio for non-Zimbabwe countries (no data yet).
+        // Boundaries work for any country whose backend mapping is configured.
+        if (!isZimbabwe && isTurningOn && (isSuitability || isSocio)) {
           cb.checked = false;
-
-          let msg = `Layers for ${selectedCountry} are not configured yet.`;
-          if (isSuitability) {
-            msg = "Suitability layers are currently only available for Zimbabwe.";
-          }
-
+          const msg = isSuitability
+            ? "Suitability layers are currently only available for Zimbabwe."
+            : `Layers for ${selectedCountry} are not configured yet.`;
           setStatus(msg, true);
           return;
         }
 
         if (isSuitability) {
           if (cb.checked) {
-            // Single-select: uncheck & remove other suitability rasters
+            // Single-select: uncheck & remove other suitability rasters.
             layerCheckboxes.forEach((other) => {
               const otherDataset = other.value;
               const otherId = other.dataset.id;
@@ -695,6 +813,17 @@
 
         if (isBoundary) {
           if (cb.checked) {
+            // Single-select within the boundary group — only one admin level
+            // visible at a time, since stacked admin lines just clutter the map.
+            layerCheckboxes.forEach((other) => {
+              if (other === cb) return;
+              const otherDataset = other.value || "";
+              if (other.checked && otherDataset.startsWith("BOUNDARY_")) {
+                other.checked = false;
+                boundaryManager.removeBoundaryVectorLayer(other.dataset.id);
+              }
+            });
+            clearHighlight();
             boundaryManager.addBoundaryVectorLayer(dataset, id, labelText);
           } else {
             boundaryManager.removeBoundaryVectorLayer(id);
@@ -716,35 +845,82 @@
   }
 
 
-// ------------------------- LAYER TREE FILTER BY COUNTRY -------------------------
-// ------------------------- LAYER TREE FILTER BY COUNTRY -------------------------
-// ------------------------- LAYER TREE FILTER BY COUNTRY -------------------------
-function updateLayerTreeForCountry() {
-  const selectedCountry = getCurrentCountry();
-  currentCountry = selectedCountry; // keep in sync
+  // ------------------------- LAYER TREE FILTER BY COUNTRY -------------------------
+  function updateLayerTreeForCountry() {
+    const selectedCountry = getCurrentCountry();
+    currentCountry = selectedCountry; // keep in sync
 
-  document.querySelectorAll(".layer-leaf").forEach((leaf) => {
-    // 🔹 Always keep rows visible so the tree is never empty
-    leaf.style.display = "";
+    const matchesCountry = (leaf) => {
+      const cb = leaf.querySelector('input[name="layer"]');
+      const leafCountry =
+        leaf.dataset.country ||
+        (cb && cb.dataset.country) ||
+        "Zimbabwe";
+      return leafCountry === selectedCountry;
+    };
 
-    const cb = leaf.querySelector('input[name="layer"]');
-    if (!cb) return;
+    // Bootstrap utility classes (.d-flex on leaves) carry `!important`, so a
+    // plain inline `display: none` is overridden. Use setProperty with the
+    // "important" priority — and removeProperty to restore the class default.
+    const setHidden = (el, hidden) => {
+      if (hidden) {
+        el.setAttribute("hidden", "");
+        el.style.setProperty("display", "none", "important");
+      } else {
+        el.removeAttribute("hidden");
+        el.style.removeProperty("display");
+      }
+    };
 
-    // Read country from label or input (default Zimbabwe)
-    const leafCountry = leaf.dataset.country || cb.dataset.country || "Zimbabwe";
+    // Pass 1: per-leaf — hide and uncheck wrong-country leaves.
+    document.querySelectorAll(".layer-leaf").forEach((leaf) => {
+      const cb = leaf.querySelector('input[name="layer"]');
+      if (!cb) return;
 
-    const isForSelectedCountry = leafCountry === selectedCountry;
+      const isForSelectedCountry = matchesCountry(leaf);
 
-    // 🔹 If switching away from this layer's country, force it off
-    if (!isForSelectedCountry && cb.checked) {
-      cb.checked = false;
-      cb.dispatchEvent(new Event("change"));
+      if (!isForSelectedCountry && cb.checked) {
+        cb.checked = false;
+        cb.dispatchEvent(new Event("change"));
+      }
+
+      setHidden(leaf, !isForSelectedCountry);
+    });
+
+    // Pass 2: hide layer groups whose leaves are all wrong-country, so empty
+    // section headers (e.g. "Suitability maps" when South Africa is selected)
+    // disappear instead of showing a header with nothing under it.
+    let visibleGroupCount = 0;
+    document.querySelectorAll(".layer-tree .layer-group").forEach((group) => {
+      const leaves = group.querySelectorAll(".layer-leaf");
+      let hasMatch = false;
+      for (const leaf of leaves) {
+        if (matchesCountry(leaf)) { hasMatch = true; break; }
+      }
+      if (hasMatch) visibleGroupCount += 1;
+      setHidden(group, !hasMatch);
+    });
+
+    // Pass 3: show an empty-state if no group has any leaf for this country.
+    // Substitutes the country name into the message; falls back to a generic
+    // line when ivT is unavailable.
+    const emptyEl = document.getElementById("layerTreeEmpty");
+    const emptyText = document.getElementById("layerTreeEmptyText");
+    if (emptyEl) {
+      const showEmpty = visibleGroupCount === 0;
+      emptyEl.classList.toggle("d-none", !showEmpty);
+      if (showEmpty && emptyText) {
+        const tmpl =
+          (typeof window.ivT === "function"
+            ? window.ivT(
+                "layers_not_configured",
+                "Layers for {country} are not configured yet."
+              )
+            : "Layers for {country} are not configured yet.");
+        emptyText.textContent = tmpl.replace("{country}", selectedCountry);
+      }
     }
-
-    // 🔹 Optional: visually dim layers that don't belong to the selected country
-    leaf.classList.toggle("is-disabled-country", !isForSelectedCountry);
-  });
-}
+  }
 
 
 
@@ -820,6 +996,26 @@ function updateLayerTreeForCountry() {
 
   API.removeMapLayer = removeMapLayer;
   API.addRasterLayer = addRasterLayer;
+
+  // Re-fetch the currently checked suitability raster — used by the Tweaks
+  // panel after a palette swap so the EE tile repaints in the new colours.
+  API.refreshActiveSuitability = function refreshActiveSuitability() {
+    const checked = document.querySelector(
+      'input[name="layer"][type="checkbox"]:checked'
+    );
+    if (!checked) return;
+    const dataset = checked.value || "";
+    const id = checked.dataset.id || "";
+    if (!dataset.startsWith("projects/") || !id) return;
+    if (id.startsWith("SOC_")) return; // socio FCs are not affected by palette
+    const labelText =
+      checked.closest("label")?.querySelector("span.layer-label")?.textContent ||
+      dataset;
+    // Drop the existing source/layer so the new tile URL is used.
+    removeMapLayer(id);
+    // analysisManager not needed for repaint — keep its cached suitability.
+    addRasterLayer(dataset, id, labelText, true, API.analysisManager);
+  };
 
   API.wireLayerTreeGroups = wireLayerTreeGroups;
   API.wireLayerGroupDragAndDrop = wireLayerGroupDragAndDrop;
