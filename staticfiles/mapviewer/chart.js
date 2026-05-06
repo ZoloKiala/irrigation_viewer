@@ -1,127 +1,143 @@
-/* global Chart */
+/* Lightweight HTML bar-row chart for suitability-class areas.
+   Same shape API as the previous Chart.js wrapper:
+     - IrrChart.update(items, opts?) where items = [{class, label, area_ha}, …]
+     - IrrChart.clear()
+   Renders into #irr-chart. */
 
 (function () {
-  const CANVAS_ID = "irr-chart";
+  const CONTAINER_ID = "irr-chart";
 
-  // Same colours as the map legend
-  const CLASS_COLORS = {
-    0: "#f1e5cd", // N
-    1: "#166534", // S1
-    2: "#22c55e", // S2
-    3: "#fde047", // S3
+  // Default palette (Verdant). Tweaks panel can override via IV_SUIT_PALETTE.
+  const DEFAULT_PALETTE = {
+    N: "#f1e5cd", S1: "#166534", S2: "#22c55e", S3: "#fde047",
   };
 
+  function getPalette() {
+    return window.IV_SUIT_PALETTE || DEFAULT_PALETTE;
+  }
+
   function colourForItem(item) {
-    // Prefer numeric class if available
+    const p = getPalette();
+    const byIndex = [p.N, p.S1, p.S2, p.S3];
     const cls = typeof item.class === "number"
       ? item.class
       : parseInt(item.class, 10);
-
-    if (!Number.isNaN(cls) && CLASS_COLORS.hasOwnProperty(cls)) {
-      return CLASS_COLORS[cls];
+    if (!Number.isNaN(cls) && cls >= 0 && cls < byIndex.length) {
+      return byIndex[cls];
     }
-
-    // Fallback based on label text
     const label = (item.label || "").toUpperCase();
-    if (label.startsWith("N")) return CLASS_COLORS[0];
-    if (label.startsWith("S1")) return CLASS_COLORS[1];
-    if (label.startsWith("S2")) return CLASS_COLORS[2];
-    if (label.startsWith("S3")) return CLASS_COLORS[3];
-
-    // Generic grey fallback
+    if (label.startsWith("N")) return p.N;
+    if (label.startsWith("S1")) return p.S1;
+    if (label.startsWith("S2")) return p.S2;
+    if (label.startsWith("S3")) return p.S3;
     return "#6b7280";
   }
 
+  function fmtHa(n) {
+    return Math.round(n).toLocaleString();
+  }
+
+  function emptyMessage() {
+    if (typeof window.ivT === "function") {
+      return window.ivT(
+        "chart_empty",
+        "No analysis yet. Draw a polygon or click a boundary."
+      );
+    }
+    return "No analysis yet. Draw a polygon or click a boundary.";
+  }
+
+  function renderEmpty(container) {
+    container.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.className = "iv-chart-empty";
+    empty.setAttribute("data-i18n", "chart_empty");
+    empty.textContent = emptyMessage();
+    container.appendChild(empty);
+  }
+
   const IrrChart = {
-    _chart: null,
-
-    _ensureChart() {
-      if (this._chart) return this._chart;
-
-      const canvas = document.getElementById(CANVAS_ID);
-      if (!canvas) return null;
-
-      const ctx = canvas.getContext("2d");
-      this._chart = new Chart(ctx, {
-        type: "pie",
-        data: {
-          labels: [],
-          datasets: [
-            {
-              label: "Area (ha)",
-              data: [],
-              backgroundColor: [],
-              borderColor: "#020617",
-              borderWidth: 1,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              position: "bottom",
-              labels: {
-                color: "#e5e7eb",
-                boxWidth: 10,
-              },
-            },
-            title: {
-              display: false,
-            },
-          },
-        },
-      });
-
-      return this._chart;
-    },
-
     update(items, opts) {
-      const chart = this._ensureChart();
-      if (!chart || !Array.isArray(items)) return;
+      const container = document.getElementById(CONTAINER_ID);
+      if (!container || !Array.isArray(items)) return;
 
-      const labels = [];
-      const data = [];
-      const colors = [];
-
-      items.forEach((item) => {
-        const lbl = item.label || String(item.class);
-        const val = Number(item.area_ha) || 0;
-        if (val <= 0) return;
-
-        labels.push(lbl);
-        data.push(val);
-        colors.push(colourForItem(item));
-      });
-
-      chart.data.labels = labels;
-      chart.data.datasets[0].data = data;
-      chart.data.datasets[0].backgroundColor = colors;
-
-      if (opts && opts.title) {
-        chart.options.plugins.title.display = true;
-        chart.options.plugins.title.text = opts.title;
-        chart.options.plugins.title.color = "#e5e7eb";
-        chart.options.plugins.title.font = { size: 13, weight: "600" };
-      } else {
-        chart.options.plugins.title.display = false;
+      const visible = items.filter((it) => (Number(it.area_ha) || 0) > 0);
+      if (!visible.length) {
+        renderEmpty(container);
+        return;
       }
 
-      chart.update("active");
+      const max = Math.max(...visible.map((it) => Number(it.area_ha) || 0));
+      container.innerHTML = "";
+
+      if (opts && opts.title) {
+        const title = document.createElement("div");
+        title.className = "iv-chart-title";
+        title.textContent = opts.title;
+        container.appendChild(title);
+      }
+
+      visible.forEach((item) => {
+        const val = Number(item.area_ha) || 0;
+        const widthPct = max > 0 ? (val / max) * 100 : 0;
+        const color = colourForItem(item);
+
+        const row = document.createElement("div");
+        row.className = "iv-chart-row";
+
+        const lbl = document.createElement("span");
+        lbl.className = "iv-chart-lbl";
+        lbl.textContent = item.label || String(item.class);
+
+        const wrap = document.createElement("div");
+        wrap.className = "iv-chart-bar-wrap";
+        const bar = document.createElement("div");
+        bar.className = "iv-chart-bar";
+        bar.style.width = widthPct + "%";
+        bar.style.background = color;
+        wrap.appendChild(bar);
+
+        const num = document.createElement("span");
+        num.className = "iv-chart-val";
+        num.textContent = fmtHa(val) + " ha";
+
+        row.appendChild(lbl);
+        row.appendChild(wrap);
+        row.appendChild(num);
+        container.appendChild(row);
+      });
     },
 
     clear() {
-      const chart = this._ensureChart();
-      if (!chart) return;
-
-      chart.data.labels = [];
-      chart.data.datasets[0].data = [];
-      chart.data.datasets[0].backgroundColor = [];
-      chart.options.plugins.title.display = false;
-      chart.update("none");
+      const container = document.getElementById(CONTAINER_ID);
+      if (!container) return;
+      renderEmpty(container);
     },
   };
 
   window.IrrChart = IrrChart;
+
+  // Re-render the empty-state copy when the user switches languages.
+  document.addEventListener("iv:languagechange", () => {
+    const container = document.getElementById(CONTAINER_ID);
+    if (!container) return;
+    if (container.querySelector(".iv-chart-empty")) {
+      renderEmpty(container);
+    }
+  });
+
+  // Repaint bars when the palette tweak changes.
+  document.addEventListener("iv:tweak-palette-changed", () => {
+    const container = document.getElementById(CONTAINER_ID);
+    if (!container) return;
+    // Re-color any rendered bars in place (no need to rebuild the row layout).
+    container.querySelectorAll(".iv-chart-row").forEach((row) => {
+      const lbl = row.querySelector(".iv-chart-lbl");
+      const bar = row.querySelector(".iv-chart-bar");
+      if (!lbl || !bar) return;
+      const text = (lbl.textContent || "").trim().toUpperCase();
+      const fakeItem = { label: text };
+      bar.style.background = colourForItem(fakeItem);
+    });
+  });
 })();

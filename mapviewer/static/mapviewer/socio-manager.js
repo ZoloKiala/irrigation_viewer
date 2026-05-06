@@ -5,6 +5,10 @@
 
   const API = window.MAPVIEWER || (window.MAPVIEWER = {});
 
+  // Translation helper — falls back to the English string if ivT() isn't loaded yet.
+  const _t = (key, fallback) =>
+    typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
+
   class SocioManager {
     constructor(options) {
       this.map = options.map;
@@ -40,8 +44,9 @@
       }
 
       try {
-        this.setStatus("Loading socio-economic features…", false);
-        API.showMapSpinner("Loading socio-economic features…");
+        const loadingMsg = _t("status_loading_socio", "Loading socio-economic features…");
+        this.setStatus(loadingMsg, false);
+        API.showMapSpinner(loadingMsg);
 
         const resp = await fetch(
           `${this.geeSocioUrl}?dataset=${encodeURIComponent(dataset)}`
@@ -148,7 +153,7 @@
       } catch (err) {
         console.error("Failed to add socio layer", err);
         API.hideMapSpinner();
-        this.setStatus("Error loading socio-economic features.", true);
+        this.setStatus(_t("status_socio_error", "Error loading socio-economic features."), true);
       }
     }
 
@@ -237,9 +242,11 @@
                    placeholder="Search…"
                    data-target-table="${tableId}">
             <button type="button"
-                    class="btn btn-outline-light btn-sm py-0 px-2"
-                    data-zoom-layer-id="${layerId}">
-              Zoom all
+                    class="attribute-zoom-btn"
+                    data-zoom-layer-id="${layerId}"
+                    title="Zoom to all features"
+                    aria-label="Zoom to all features">
+              <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
             </button>
           </div>
         </div>

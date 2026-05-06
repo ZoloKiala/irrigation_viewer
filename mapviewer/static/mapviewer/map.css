@@ -1,13 +1,5 @@
 /* ===================== ROOT + RESET ===================== */
-:root{
-  --giims-bg: #020617;
-  --giims-panel: rgba(15,23,42,0.96);
-  --giims-border-soft: rgba(148,163,184,.3);
-  --giims-border-strong: rgba(55,65,81,.9);
-  --giims-text: #e5e7eb;
-  --giims-muted: #9ca3af;
-  --giims-accent: #2563eb;
-}
+/* Design tokens live in colors_and_type.css (--iv-* namespace), loaded first. */
 
 *{ box-sizing: border-box; }
 
@@ -23,37 +15,94 @@ body{
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
                "Helvetica Neue", Arial, sans-serif;
   background: radial-gradient(circle at top, #1d263b 0, #020617 55%);
-  color: var(--giims-text);
-}
-
-.giims-main{
-  flex: 1 1 auto;
-  display: flex;
-  gap: .5rem;
-  min-height: 0;
+  color: var(--iv-fg-2);
 }
 
 /* ===================== LAYOUT HELPERS ===================== */
 /* Make draw vertices pop over imagery */
 .maplibregl-canvas-container { cursor: crosshair; }
 
-.mt-nav { margin-top: 56px; }
+/* Top nav reserves 72px (see .with-nav margin-top + height below) */
+.mt-nav { margin-top: 72px; }
 .bg-panel { background: #0b1220; }
 .border-secondary-subtle { border-color: rgba(148,163,184,.18) !important; }
-.sidebar { max-height: calc(100vh - 56px); }
+.sidebar { max-height: calc(100vh - 72px); }
+
+/* ----- Resizable sidebar (desktop only) -----
+   Sidebar width comes from the --sidebar-w custom property so JS can drive
+   it from a drag handle. On <md screens we let Bootstrap's responsive
+   classes take over (full-width, stacked). */
+:root { --sidebar-w: 320px; }
+
+@media (min-width: 768px) {
+  .with-nav > .sidebar {
+    flex: 0 0 var(--sidebar-w);
+    max-width: var(--sidebar-w);
+    width: var(--sidebar-w);
+    transition: none;
+  }
+  .with-nav > .map-col {
+    flex: 1 1 0;
+    max-width: none;
+  }
+}
+
+/* Higher specificity so we beat Bootstrap's `.row > *` width:100% rule */
+.with-nav > .sidebar-resizer,
+.sidebar-resizer {
+  position: relative;
+  display: block;
+  flex: 0 0 8px !important;
+  width: 8px !important;
+  max-width: 8px !important;
+  padding: 0 !important;
+  margin: 0;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 14;
+  touch-action: none;
+  align-self: stretch;
+  transition: background .15s ease;
+}
+.sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--iv-border-subtle);
+  transform: translateX(-50%);
+  transition: background .15s ease, width .15s ease;
+}
+.sidebar-resizer:hover::before,
+.sidebar-resizer.is-dragging::before,
+.sidebar-resizer:focus-visible::before {
+  background: var(--iv-accent);
+  width: 3px;
+}
+.sidebar-resizer:focus-visible {
+  outline: none;
+}
+/* While dragging, kill text-selection cursors everywhere */
+body.sidebar-resizing,
+body.sidebar-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 .map-host { position: absolute; inset: 0; }
 
 /* Map column + with-nav */
 .with-nav{
   height: calc(100vh - 72px);
-  background: var(--giims-bg);
+  background: var(--iv-bg);
   margin-top: 72px;
 }
 
 .map-col{
   height: 100%;
   position: relative;
-  background: var(--giims-bg);
+  background: var(--iv-bg);
 }
 
 .map-host,
@@ -108,16 +157,72 @@ body{
 .navbar-iv-inner{
   background: rgba(15,23,42,0.98);
   border-radius: 999px;
-  padding: .35rem .75rem;
+  padding: .35rem .65rem .35rem .85rem;
   box-shadow: 0 15px 40px rgba(0,0,0,.85);
-  display: flex;
+  /* Three equal zones: left (brand + status), centre (nav pills), right
+     (partner + language). The CSS grid lets us truly centre the pill bar
+     instead of relying on margin-auto from the right cluster. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 1.25rem;
+  gap: .85rem;
   width: 100%;
 }
 
-.navbar-brand span{
+/* Left, centre, right clusters */
+.navbar-iv-left,
+.navbar-iv-centre,
+.navbar-iv-right{
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  min-width: 0;
+}
+.navbar-iv-left   { justify-self: start;  min-width: 0; }
+.navbar-iv-centre { justify-self: center; }
+.navbar-iv-right  { justify-self: end; }
+
+/* On narrow screens, drop the centre column and let the pills wrap to the
+   right cluster so nothing collides with the brand. */
+@media (max-width: 900px) {
+  .navbar-iv-inner {
+    grid-template-columns: 1fr auto;
+  }
+  .navbar-iv-centre {
+    grid-column: 1 / -1;
+    justify-self: end;
+    order: 3;
+  }
+}
+
+/* Brand */
+.navbar-brand-iv{
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  text-decoration: none;
+  color: var(--iv-fg-1);
+  flex-shrink: 0;
+}
+.navbar-brand-iv:hover{ color: var(--iv-fg-1); }
+.navbar-brand-icon{
+  height: 24px;
+  width: 24px;
+}
+.navbar-brand-text{
   font-size: .95rem;
+  font-weight: var(--iv-fw-semibold);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+}
+
+/* Vertical divider between brand and status (kit pattern) */
+.navbar-divider{
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: var(--iv-border-soft);
+  flex-shrink: 0;
 }
 
 .nav-pill-bar{
@@ -152,7 +257,7 @@ body{
 }
 
 .nav-pill-item.active{
-  background: var(--giims-accent);
+  background: var(--iv-accent);
   color: #ffffff;
   box-shadow: 0 6px 16px rgba(37,99,235,.55);
 }
@@ -162,10 +267,94 @@ body{
   color: #111827;
 }
 
+/* Plain inline status text in the nav — "Active: <layer name>".
+   Per the design kit (ui_kits/web/Navbar.jsx), this stays understated; no
+   chip, no border, no fill. The layer name itself is slightly less muted
+   than the "Active:" label so the value reads as the variable part. */
 .nav-status{
-  margin-left: 0;
-  font-size: .75rem;
-  color: var(--giims-muted);
+  font-size: .8rem;
+  color: var(--iv-fg-3);
+  display: inline-flex;
+  align-items: baseline;
+  gap: .35rem;
+  min-width: 0;
+  max-width: 380px;
+  overflow: hidden;
+}
+.nav-status-label{
+  color: var(--iv-fg-3);
+  font-weight: var(--iv-fw-medium);
+  flex-shrink: 0;
+}
+.nav-status .text-secondary,
+.nav-status-value{
+  color: var(--iv-fg-2) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.nav-status--on .nav-status-value,
+.nav-status--on .text-secondary{
+  color: var(--iv-fg-1) !important;
+  font-weight: var(--iv-fw-medium);
+}
+
+/* Partner logo (IWMI) — sits between the pill bar and the language toggle,
+   modest scale + muted tint so it reads as branding, not a button. */
+.navbar-partner{
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  text-decoration: none;
+  color: var(--iv-fg-3);
+  font-size: .7rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  border-left: 1px solid var(--iv-border-soft);
+  padding-left: .85rem;
+  margin-left: .15rem;
+  transition: color .15s ease, opacity .15s ease;
+  opacity: .85;
+}
+.navbar-partner:hover{
+  color: var(--iv-fg-2);
+  opacity: 1;
+}
+.navbar-partner-prefix{
+  white-space: nowrap;
+}
+.navbar-partner-logo{
+  height: 24px;
+  width: auto;
+  display: block;
+  opacity: .92;
+  transition: opacity .15s ease, filter .15s ease;
+  /* The official blue PNG has dark-blue text on transparent. On our dark
+     nav we render it as a white silhouette; light moods (Daylight / Paper)
+     drop the filter so the brand blue shows. */
+  filter: brightness(0) invert(1);
+}
+.navbar-partner:hover .navbar-partner-logo{
+  opacity: 1;
+}
+html[data-iv-mood="daylight"] .navbar-partner-logo,
+html[data-iv-mood="paper"] .navbar-partner-logo {
+  filter: none;
+}
+
+/* Tighten on smaller widths: hide "Built by" label, keep logo */
+@media (max-width: 1100px) {
+  .navbar-partner-prefix { display: none; }
+  .navbar-partner {
+    padding-left: .6rem;
+  }
+}
+/* Hide partner block entirely on narrow screens — it'd just clutter */
+@media (max-width: 768px) {
+  .navbar-partner { display: none; }
+  .navbar-divider { display: none; }
+  .nav-status { display: none; }
 }
 
 @media (max-width: 768px){
@@ -222,7 +411,7 @@ body{
   padding: .4rem .75rem;
   cursor: pointer;
   border-radius: 0;
-  color: var(--giims-text);
+  color: var(--iv-fg-2);
   background: transparent;
   position: relative;
   z-index: 1;
@@ -252,7 +441,7 @@ body{
 .layer-group-chevron{
   transition: transform .2s ease;
   font-size: .75rem;
-  color: var(--giims-muted);
+  color: var(--iv-fg-3);
 }
 
 .layer-group.open .layer-group-chevron{
@@ -305,7 +494,7 @@ body{
 }
 
 .layer-label{
-  color: var(--giims-text);
+  color: var(--iv-fg-2);
   cursor: pointer;
 }
 
@@ -316,28 +505,11 @@ body{
 /* ===================== STATUS / ANALYSIS ===================== */
 #statusBox{
   font-size: .75rem;
-  color: var(--giims-muted);
+  color: var(--iv-fg-3);
 }
 
 #analysisBox{
   font-size: .78rem;
-}
-
-/* ===================== MAP SHELL ===================== */
-.giims-map-shell{
-  flex: 1 1 auto;
-  min-width: 0;
-  border-radius: .9rem;
-  border: 1px solid var(--giims-border-soft);
-  background:
-    radial-gradient(circle at top left, rgba(37,99,235,.25) 0, transparent 55%),
-    radial-gradient(circle at bottom right, rgba(16,185,129,.25) 0, transparent 55%),
-    var(--giims-bg);
-  box-shadow: 0 18px 65px rgba(0,0,0,.7);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
 }
 
 /* ===================== BASEMAP GALLERY ===================== */
@@ -372,7 +544,7 @@ body{
   border-radius: .7rem;
   border: 1px solid rgba(148,163,184,.9);
   box-shadow: 0 18px 40px rgba(0,0,0,.85);
-  color: var(--giims-text);
+  color: var(--iv-fg-2);
   font-size: .7rem;
   display: none;
 }
@@ -443,17 +615,6 @@ body{
   }
 }
 
-/* Optional alternative basemap container (unused but safe) */
-.map-basemaps{
-  position: absolute;
-  top: 120px;
-  right: 12px;
-  z-index: 10;
-}
-.map-basemaps .btn{
-  padding-inline: 0.5rem;
-}
-
 /* ===================== SEARCH / LOCATE WIDGET ===================== */
 .map-search{
   position: absolute;
@@ -471,7 +632,7 @@ body{
 .map-search .form-control{
   background: transparent;
   border: none;
-  color: var(--giims-text);
+  color: var(--iv-fg-2);
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -495,32 +656,81 @@ body{
 }
 
 /* ===================== DRAW TOOLBAR ===================== */
+/* Vertical capsule of distinct icon buttons.
+   Pattern follows ui_kits/web/kit.css .iv-draw — each button has its
+   own subtle dark fill + border so it reads as a discrete affordance,
+   not a hole in the pill. Active state is clean brand-blue, no halo. */
 .draw-toolbar{
   position: absolute;
   top: 3.6rem;
   left: .75rem;
   z-index: 10;
-  background: rgba(15,23,42,.85);
-  border-radius: 999px;
-  padding: .15rem;
-  border: 1px solid rgba(148,163,184,.9);
-  box-shadow: 0 10px 30px rgba(0,0,0,.7);
+  padding: .2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* background, border, radius, shadow come from the unified .draw-toolbar
+     rule in the polish block below */
 }
 
-.draw-toolbar .btn{
-  font-size: .78rem;
-}
-
+/* Override Bootstrap btn-dark / btn-group defaults for the draw buttons */
 .draw-toolbar.btn-group{
   display: flex;
   flex-direction: column;
 }
-
-.draw-toolbar .btn{
-  display: block;
-  border-radius: 999px;
-  margin: 2px 0;
-  padding-inline: .45rem;
+/* Buttons inside the toolbar.
+   The compound selector `.draw-toolbar.btn-group > .btn` matches Bootstrap's
+   own corner-zeroing rules in specificity, and !important on border-radius
+   makes sure each button stays a clean circle even when Bootstrap's
+   `.btn-group > .btn:nth-child(n+3)` and friends try to flatten corners. */
+.draw-toolbar.btn-group > .btn,
+.draw-toolbar.btn-group > .btn-dark,
+.draw-toolbar.btn-group > .btn-sm,
+.draw-toolbar .btn,
+.draw-toolbar .btn-dark,
+.draw-toolbar .btn-sm{
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--iv-border-soft);
+  border-top-left-radius: 999px !important;
+  border-top-right-radius: 999px !important;
+  border-bottom-left-radius: 999px !important;
+  border-bottom-right-radius: 999px !important;
+  background: var(--iv-panel-85);
+  color: var(--iv-fg-2);
+  font-size: .85rem;
+  line-height: 1;
+  box-shadow: none;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.draw-toolbar .btn:hover,
+.draw-toolbar .btn-dark:hover{
+  background: var(--iv-panel-translucent);
+  border-color: var(--iv-border-strong, var(--iv-border-soft));
+  color: var(--iv-fg-1);
+}
+.draw-toolbar .btn.active,
+.draw-toolbar .btn-dark.active{
+  background: var(--iv-accent);
+  border-color: var(--iv-accent);
+  color: #fff;
+  box-shadow: none;
+}
+.draw-toolbar .btn:focus,
+.draw-toolbar .btn-dark:focus{
+  box-shadow: none;
+}
+.draw-toolbar .btn:focus-visible{
+  outline: 2px solid var(--iv-accent);
+  outline-offset: 2px;
+}
+.draw-toolbar .btn i{
+  font-size: .9rem;
 }
 
 /* ===================== LEGEND ===================== */
@@ -569,20 +779,47 @@ body{
   border: 1px solid rgba(148,163,184,.8);
   box-shadow: 0 16px 45px rgba(0,0,0,.8);
   font-size: .78rem;
-  min-width: 320px;
-  max-width: 70%;
-  min-height: 140px;
-  max-height: 70%;
+  /* Roomier defaults so the table breathes; user can drag to resize. */
+  width: 720px;
+  height: 360px;
+  min-width: 360px;
+  max-width: 90vw;
+  min-height: 180px;
+  max-height: 80vh;
   display: flex;
   flex-direction: column;
   resize: both;
   overflow: hidden;
 }
 
+/* Visible resize-handle indicator. The CSS3 `resize: both` shows only a
+   tiny browser-default mark; this overlay makes the affordance obvious.
+   pointer-events: none lets mouse clicks fall through to the real handle. */
+.attribute-panel::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  background-image:
+    linear-gradient(135deg,
+      transparent 0%, transparent 45%,
+      rgba(148, 163, 184, .55) 45%, rgba(148, 163, 184, .55) 55%,
+      transparent 55%, transparent 70%,
+      rgba(148, 163, 184, .55) 70%, rgba(148, 163, 184, .55) 80%,
+      transparent 80%);
+  border-bottom-right-radius: .55rem;
+  opacity: .9;
+}
+
 .attribute-panel-header{
   padding: .35rem .55rem;
   border-bottom: 1px solid rgba(55,65,81,.9);
   cursor: move;
+  /* Block browser pan/zoom gestures so pointer-drag works on touchscreens */
+  touch-action: none;
   background: linear-gradient(
     to right,
     rgba(15,23,42,1),
@@ -612,24 +849,77 @@ body{
 .attribute-search-input{
   background-color: rgba(15,23,42,0.9);
   border: 1px solid rgba(148,163,184,.7);
-  color: var(--giims-text);
+  color: var(--iv-fg-2);
+}
+
+/* Zoom-all button — icon-only, no text. Compact square that doesn't fight
+   the search input for horizontal space inside the panel header. */
+.attribute-zoom-btn{
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: .35rem;
+  background: var(--iv-panel-85);
+  border: 1px solid var(--iv-border-soft);
+  color: var(--iv-fg-2);
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.attribute-zoom-btn:hover{
+  color: var(--iv-fg-1);
+  border-color: rgba(148, 163, 184, .55);
+  background: var(--iv-panel-translucent);
+}
+.attribute-zoom-btn:focus-visible{
+  outline: 2px solid var(--iv-accent);
+  outline-offset: 2px;
+}
+.attribute-zoom-btn i{
+  font-size: .9rem;
 }
 .attribute-search-input:focus{
   box-shadow: 0 0 0 .15rem rgba(37,99,235,.35);
   outline: none;
 }
 
-/* attribute toggle button */
+/* attribute toggle — icon-only FAB matching the basemap toggle and tweaks button */
 .attribute-toggle-btn{
   position: absolute;
   bottom: .8rem;
   left: .8rem;
   z-index: 13;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
-  background: rgba(15,23,42,.95);
-  border: 1px solid rgba(148,163,184,.9);
-  box-shadow: 0 10px 30px rgba(0,0,0,.8);
-  font-size: .78rem;
+  background: var(--iv-panel-translucent, rgba(15, 23, 42, 0.96));
+  border: 1px solid var(--iv-border-soft, rgba(148, 163, 184, 0.30));
+  box-shadow: var(--iv-shadow-card, 0 10px 30px rgba(0, 0, 0, 0.7));
+  color: var(--iv-fg-2);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.attribute-toggle-btn:hover{
+  color: var(--iv-fg-1);
+  border-color: rgba(148, 163, 184, .55);
+  background: rgba(15, 23, 42, 0.99);
+}
+.attribute-toggle-btn:focus-visible{
+  outline: 2px solid var(--iv-accent);
+  outline-offset: 2px;
+}
+.attribute-toggle-btn[aria-pressed="true"]{
+  background: var(--iv-accent);
+  border-color: var(--iv-accent);
+  color: #fff;
 }
 
 /* selected row highlight */
@@ -702,7 +992,7 @@ body{
 }
 .app-loader-subtitle{
   font-size: .8rem;
-  color: var(--giims-muted);
+  color: var(--iv-fg-3);
 }
 .app-loader-skeleton{
   border-radius: .75rem;
@@ -742,7 +1032,7 @@ body{
   background: transparent;
   padding: 0;
   margin-left: .25rem;
-  color: var(--giims-muted);
+  color: var(--iv-fg-3);
   font-size: .9rem;
   cursor: pointer;
 }
@@ -863,6 +1153,1092 @@ body{
 
 .popup-actions .btn {
   white-space: nowrap;
+}
+
+/* ===================== ANALYSIS BAR-ROW CHART ===================== */
+/* Replaces Chart.js — see mapviewer/static/mapviewer/chart.js */
+.iv-chart{
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+  min-height: 180px;
+  padding: .35rem .15rem;
+}
+.iv-chart-title{
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--iv-fg-1);
+  margin-bottom: .1rem;
+}
+.iv-chart-row{
+  display: grid;
+  grid-template-columns: 28px 1fr 78px;
+  align-items: center;
+  gap: .5rem;
+  font-size: .74rem;
+}
+.iv-chart-lbl{
+  font-weight: 600;
+  color: var(--iv-fg-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.iv-chart-bar-wrap{
+  height: 14px;
+  background: rgba(255, 255, 255, .04);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.iv-chart-bar{
+  height: 100%;
+  border-radius: 3px;
+  transition: width .4s ease;
+}
+.iv-chart-val{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--iv-fg-3);
+  font-size: .7rem;
+  text-align: right;
+}
+.iv-chart-empty{
+  font-size: .78rem;
+  color: var(--iv-fg-3);
+  font-style: italic;
+  text-align: center;
+  padding: 2rem 0;
+}
+
+/* ===================== KEYBOARD FOCUS ===================== */
+/* Visible focus ring on all interactive elements that don't already have one.
+   Uses brand blue. Only :focus-visible (not :focus) so mouse clicks stay clean. */
+:where(
+  .nav-pill-item,
+  .map-basemap-toggle,
+  .map-basemap-card,
+  .attribute-toggle-btn,
+  .sidebar-toggle-btn,
+  .draw-toolbar .btn,
+  .layer-toggle,
+  .layer-asset-info-btn,
+  #attributePanelCloseBtn,
+  #basemapClose
+):focus-visible {
+  outline: 2px solid var(--iv-accent, #2563eb);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.25);
+}
+
+/* Layer-tree headers — use a darker focus background for clarity */
+.layer-group-header:focus-visible {
+  background: rgba(37, 99, 235, 0.18);
+  outline: 2px solid var(--iv-accent, #2563eb);
+  outline-offset: -2px;
+}
+
+/* Reset native button chrome on the basemap toggle (now a <button>) */
+button.map-basemap-toggle {
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+
+/* =====================================================================
+   DESIGN SYSTEM POLISH PASS
+   Applies design tokens (colors_and_type.css) to high-traffic surfaces:
+   sidebar typography, country select, layer-tree rows, map-control
+   unification, empty-state, modals.
+   ===================================================================== */
+
+/* ---------- Sidebar sections ---------- */
+/* Per the design kit, sections are separated by generous vertical
+   whitespace, not visible borders. Keep a hairline between Layers and
+   Analysis only — Country flows directly into Layers. */
+.iv-side-section {
+  margin-bottom: 1.5rem;
+}
+.iv-side-section + .iv-side-section { margin-top: .25rem; }
+.iv-side-section:last-child { margin-bottom: 0; }
+
+.iv-side-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .85rem;
+}
+.iv-side-section-text { min-width: 0; }
+
+.iv-side-h1,
+.iv-side-h2 {
+  font-size: 1.1rem;
+  font-weight: var(--iv-fw-bold);
+  color: var(--iv-fg-1);
+  letter-spacing: -0.01em;
+  line-height: var(--iv-lh-tight);
+}
+.iv-side-h1 { margin: 0 0 .25rem 0; }
+.iv-side-h2 { margin: 0 0 .5rem 0; }
+
+.iv-side-help {
+  font-size: var(--iv-fs-small);
+  color: var(--iv-fg-3);
+  line-height: 1.45;
+  margin: 0;
+}
+.iv-side-help--block { margin-bottom: .85rem; }
+
+.iv-status-box {
+  font-size: var(--iv-fs-xs);
+  color: var(--iv-fg-3);
+  margin-top: .65rem;
+  min-height: 1em;
+}
+
+/* ---------- Custom country select (replaces Bootstrap form-select) ---------- */
+.iv-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--iv-panel-85);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%239ca3af'><path d='M3.2 6.5L8 11l4.8-4.5L12 5.6 8 9.3 4 5.6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right .55rem center;
+  background-size: 14px 14px;
+  color: var(--iv-fg-1);
+  border: 1px solid var(--iv-border-soft);
+  border-radius: 999px;
+  padding: .35rem 1.85rem .35rem .85rem;
+  font-size: var(--iv-fs-small);
+  font-weight: var(--iv-fw-medium);
+  cursor: pointer;
+  transition: border-color .18s ease, background-color .18s ease,
+              box-shadow .18s ease;
+  min-width: 8.5rem;
+  flex-shrink: 0;
+}
+.iv-select:hover {
+  border-color: var(--iv-border-strong, rgba(148, 163, 184, .55));
+  background-color: var(--iv-panel-translucent);
+}
+.iv-select:focus-visible {
+  outline: none;
+  border-color: var(--iv-accent);
+  box-shadow: 0 0 0 3px var(--iv-accent-soft, rgba(37, 99, 235, 0.25));
+}
+.iv-select option {
+  background: var(--iv-panel);
+  color: var(--iv-fg-1);
+}
+
+/* ---------- Layer-tree row polish ---------- */
+.layer-tree { border-top: 0; padding-left: 0; }
+
+.layer-group-header {
+  border-radius: .4rem;
+  margin: 0 -.25rem;
+  padding: .45rem .65rem;
+  transition: background .15s ease, color .15s ease;
+}
+.layer-group-header:hover {
+  background: rgba(148, 163, 184, .08);
+}
+
+.layer-group-title {
+  font-size: .82rem;
+  font-weight: var(--iv-fw-semibold);
+  color: var(--iv-fg-2);
+  letter-spacing: .005em;
+}
+
+.layer-group-icon { color: var(--iv-accent-pale); }
+
+.layer-leaf {
+  padding: .28rem .25rem .28rem .15rem;
+  align-items: flex-start; /* keeps checkbox aligned to first line on wrap */
+  cursor: pointer;
+  border-radius: .25rem;
+  transition: color .15s ease;
+}
+.layer-leaf:focus-within {
+  outline: 1px solid rgba(37, 99, 235, .4);
+  outline-offset: 1px;
+}
+
+/* Long admin names wrap to two lines instead of being clipped. The kit
+   shows "Zimbabwe — Admin Level 1\n(Provinces)" naturally. */
+.layer-label {
+  font-size: .78rem;
+  color: var(--iv-fg-2);
+  font-weight: var(--iv-fw-regular);
+  line-height: 1.4;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+}
+.layer-leaf input[type="checkbox"] {
+  accent-color: var(--iv-accent);
+  cursor: pointer;
+  margin-top: .15rem; /* nudge to align with first line of wrapped label */
+}
+
+/* ---------- Layer-leaf with inline date/band picker ---------- */
+/* The whole row is a column: checkbox+label on top, then a tinted picker
+   "card" below tied visually to the layer via a left brand-blue rule. */
+.layer-leaf-with-picker {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  padding: .35rem .25rem .45rem .15rem;
+}
+.layer-leaf-with-picker > .form-check {
+  margin: 0;
+}
+
+.layer-picker {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: .3rem;
+  /* Indent so the picker aligns with the label text (past the checkbox). */
+  margin-left: 1.6rem;
+  padding: .5rem .65rem;
+  background: rgba(148, 163, 184, .05);
+  border: 1px solid var(--iv-border-subtle);
+  border-left: 2px solid var(--iv-accent);
+  border-radius: .4rem;
+}
+
+.layer-picker-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: center;
+  gap: .55rem;
+  margin: 0;
+  font-size: .7rem;
+  color: var(--iv-fg-3);
+}
+
+.layer-picker-lbl {
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: var(--iv-fw-semibold);
+  font-size: .65rem;
+  color: var(--iv-fg-3);
+  white-space: nowrap;
+}
+
+.layer-picker select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  background-color: var(--iv-panel-85);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%239ca3af'><path d='M3.2 6.5L8 11l4.8-4.5L12 5.6 8 9.3 4 5.6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right .45rem center;
+  background-size: 12px 12px;
+  color: var(--iv-fg-1);
+  border: 1px solid var(--iv-border-soft);
+  border-radius: .35rem;
+  padding: .3rem 1.45rem .3rem .55rem;
+  font-size: .73rem;
+  font-weight: var(--iv-fw-medium);
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.layer-picker select:hover {
+  border-color: rgba(148, 163, 184, .55);
+  background-color: var(--iv-panel-translucent);
+}
+.layer-picker select:focus-visible {
+  outline: none;
+  border-color: var(--iv-accent);
+  box-shadow: 0 0 0 2px var(--iv-accent-soft, rgba(37, 99, 235, .25));
+}
+.layer-picker select:disabled {
+  opacity: .5;
+  cursor: progress;
+  font-style: italic;
+  color: var(--iv-fg-3);
+}
+.layer-picker select option {
+  background: var(--iv-panel);
+  color: var(--iv-fg-1);
+  font-style: normal;
+}
+
+/* ---------- Empty state (icon + heading + sub) ---------- */
+.layer-tree-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  padding: 1rem;
+  margin: .5rem 0;
+  background: rgba(148, 163, 184, 0.04);
+  border: 1px dashed var(--iv-border-soft);
+  border-radius: .55rem;
+}
+.iv-empty-icon {
+  font-size: 1.4rem;
+  color: var(--iv-fg-4);
+  flex-shrink: 0;
+  margin-top: .1rem;
+}
+.iv-empty-text { min-width: 0; }
+.iv-empty-title {
+  font-size: .82rem;
+  font-weight: var(--iv-fw-semibold);
+  color: var(--iv-fg-2);
+  margin-bottom: .15rem;
+}
+.iv-empty-sub {
+  font-size: var(--iv-fs-small);
+  color: var(--iv-fg-3);
+  line-height: 1.45;
+}
+
+/* ---------- Analysis chart card ---------- */
+.iv-chart-card {
+  background: #0b1220;
+  border: 1px solid var(--iv-border-subtle);
+  border-radius: .55rem;
+  padding: .65rem .75rem;
+  min-height: 200px;
+}
+
+/* ---------- Map control unification ----------
+   Single source of truth for the floating panels: same translucent slate,
+   same border, same radii, same shadow tier. */
+.map-search,
+.draw-toolbar,
+.map-basemap-toggle,
+.map-basemaps-popup,
+.legend,
+.attribute-toggle-btn,
+.attribute-panel,
+#mapLoadingOverlay .map-loading-card {
+  background: var(--iv-panel-translucent, rgba(15, 23, 42, 0.96));
+  border: 1px solid var(--iv-border-soft, rgba(148, 163, 184, 0.30));
+}
+
+/* Pill controls */
+.map-search,
+.draw-toolbar,
+.attribute-toggle-btn {
+  border-radius: 999px;
+  box-shadow: var(--iv-shadow-card, 0 10px 30px rgba(0, 0, 0, 0.7));
+}
+
+/* Square-ish controls (toggle button + popups) */
+.map-basemap-toggle {
+  border-radius: var(--iv-radius-md, .55rem);
+  box-shadow: var(--iv-shadow-card, 0 10px 30px rgba(0, 0, 0, 0.7));
+}
+.map-basemaps-popup,
+.legend {
+  border-radius: var(--iv-radius-lg, .7rem);
+  box-shadow: var(--iv-shadow-popup, 0 18px 40px rgba(0, 0, 0, 0.85));
+}
+.attribute-panel {
+  border-radius: var(--iv-radius-lg, .7rem);
+  box-shadow: var(--iv-shadow-popup, 0 18px 40px rgba(0, 0, 0, 0.85));
+}
+
+/* Hover lift on icon-toggle buttons */
+.map-basemap-toggle:hover,
+.attribute-toggle-btn:hover {
+  border-color: rgba(148, 163, 184, .55);
+  background: rgba(15, 23, 42, 0.99);
+}
+
+/* ---------- Tweaks FAB + panel ---------- */
+.tweaks-toggle {
+  position: absolute;
+  top: 9.6rem; /* directly below the basemap toggle (top: 6.5rem + 30px + gap) */
+  right: .45rem;
+  z-index: 13;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--iv-panel-translucent, rgba(15, 23, 42, 0.96));
+  border: 1px solid var(--iv-border-soft, rgba(148, 163, 184, 0.30));
+  box-shadow: var(--iv-shadow-card, 0 10px 30px rgba(0, 0, 0, 0.7));
+  color: var(--iv-fg-2);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.tweaks-toggle:hover {
+  color: var(--iv-fg-1);
+  border-color: rgba(148, 163, 184, .55);
+  background: rgba(15, 23, 42, 0.99);
+}
+.tweaks-toggle:focus-visible {
+  outline: 2px solid var(--iv-accent);
+  outline-offset: 2px;
+}
+.tweaks-toggle.is-open {
+  background: var(--iv-accent);
+  border-color: var(--iv-accent);
+  color: #fff;
+}
+
+@media (max-width: 768px) {
+  .tweaks-toggle { right: .45rem; top: 9.6rem; }
+}
+
+.tweaks-panel {
+  /* Anchored to the right edge from top, mirrors the basemap popup
+     pattern. Capped height so all 5 sections scroll inside. */
+  position: absolute;
+  top: 9.1rem;
+  right: 3.1rem;
+  z-index: 14;
+  width: 300px;
+  max-width: calc(100vw - 1.5rem);
+  max-height: calc(100vh - 11rem);
+  background: var(--iv-panel-translucent, rgba(15, 23, 42, 0.96));
+  border: 1px solid var(--iv-border-soft, rgba(148, 163, 184, 0.30));
+  border-radius: var(--iv-radius-lg, .7rem);
+  box-shadow: var(--iv-shadow-popup, 0 18px 40px rgba(0, 0, 0, 0.85));
+  color: var(--iv-fg-2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* head stays sticky, body scrolls */
+}
+.tweaks-panel-body {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  /* Slim scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: var(--iv-border-soft) transparent;
+}
+.tweaks-panel-body::-webkit-scrollbar { width: 6px; }
+.tweaks-panel-body::-webkit-scrollbar-thumb {
+  background: var(--iv-border-soft);
+  border-radius: 999px;
+}
+.tweaks-panel-body::-webkit-scrollbar-track { background: transparent; }
+
+@media (max-width: 768px) {
+  .tweaks-panel {
+    top: auto;
+    bottom: 1rem;
+    right: .75rem;
+    left: .75rem;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 12rem);
+  }
+}
+
+.tweaks-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .65rem .75rem .55rem;
+  border-bottom: 1px solid var(--iv-border-subtle);
+}
+.tweaks-panel-title {
+  margin: 0;
+  font-size: .9rem;
+  font-weight: var(--iv-fw-semibold);
+  color: var(--iv-fg-1);
+  letter-spacing: -0.005em;
+}
+.tweaks-panel-close {
+  background: transparent;
+  border: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--iv-fg-3);
+  cursor: pointer;
+  font-size: .85rem;
+  transition: background .15s ease, color .15s ease;
+}
+.tweaks-panel-close:hover {
+  background: rgba(148, 163, 184, .12);
+  color: var(--iv-fg-1);
+}
+.tweaks-panel-close:focus-visible {
+  outline: 2px solid var(--iv-accent);
+  outline-offset: 2px;
+}
+
+.tweaks-panel-body {
+  padding: .85rem .85rem 1rem;
+}
+
+.tweaks-section + .tweaks-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--iv-border-subtle);
+}
+.tweaks-section-label {
+  font-size: .68rem;
+  font-weight: var(--iv-fw-semibold);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--iv-fg-3);
+  margin-bottom: .5rem;
+}
+.tweaks-section-help {
+  font-size: .7rem;
+  color: var(--iv-fg-4);
+  margin: .35rem 0 0;
+  line-height: 1.45;
+}
+
+/* Tile radio (basemap picker, look toggles) */
+.tweaks-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .45rem;
+}
+.tweaks-tile-grid--4 {
+  grid-template-columns: repeat(4, 1fr);
+  gap: .35rem;
+}
+.tweaks-tile {
+  appearance: none;
+  background: rgba(15, 23, 42, .55);
+  border: 1.5px solid rgba(148, 163, 184, .18);
+  border-radius: .55rem;
+  padding: .35rem .35rem .4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: .35rem;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+}
+.tweaks-tile:hover {
+  background: rgba(15, 23, 42, .8);
+  border-color: rgba(148, 163, 184, .35);
+}
+.tweaks-tile.is-active,
+.tweaks-tile[aria-checked="true"] {
+  border-color: var(--iv-accent);
+  background: rgba(15, 23, 42, .9);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .25);
+}
+.tweaks-tile:focus-visible {
+  outline: none;
+  border-color: var(--iv-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .35);
+}
+.tweaks-tile-thumb {
+  display: block;
+  width: 100%;
+  height: 36px;
+  border-radius: .35rem;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(148, 163, 184, .25);
+}
+/* SVG preview tiles for Mood / Chrome / Palette */
+.tweaks-tile-preview {
+  display: block;
+  width: 100%;
+  height: 38px;
+  border-radius: .35rem;
+  border: 1px solid rgba(148, 163, 184, .25);
+  background: #0b1220;
+}
+.tweaks-tile-lbl {
+  font-size: .68rem;
+  font-weight: var(--iv-fw-medium);
+  text-align: center;
+  color: var(--iv-fg-3);
+  letter-spacing: .005em;
+  line-height: 1.2;
+}
+.tweaks-tile.is-active .tweaks-tile-lbl,
+.tweaks-tile[aria-checked="true"] .tweaks-tile-lbl {
+  color: var(--iv-fg-1);
+  font-weight: var(--iv-fw-semibold);
+}
+
+.tweaks-slider-row {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+.tweaks-slider-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .72rem;
+  color: var(--iv-fg-2);
+  min-width: 38px;
+  text-align: right;
+}
+
+.tweaks-slider {
+  flex: 1 1 auto;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(148, 163, 184, .25);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+.tweaks-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid var(--iv-accent);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+  transition: transform .12s ease;
+}
+.tweaks-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
+.tweaks-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid var(--iv-accent);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+}
+.tweaks-slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--iv-accent);
+  outline-offset: 3px;
+}
+
+/* ---------- Modals ---------- */
+.modal-content.bg-dark {
+  background: #0b1220 !important;
+  border: 1px solid var(--iv-border-soft);
+  border-radius: var(--iv-radius-lg, .7rem);
+  box-shadow: var(--iv-shadow-modal, 0 24px 80px rgba(0, 0, 0, 0.85));
+}
+.modal-header.border-secondary {
+  border-bottom-color: var(--iv-border-subtle) !important;
+  padding: 1rem 1.25rem;
+}
+.modal-header .modal-title {
+  font-size: 1.05rem;
+  font-weight: var(--iv-fw-semibold);
+  color: var(--iv-fg-1);
+  letter-spacing: -0.01em;
+}
+.modal-body {
+  padding: 1rem 1.25rem;
+  font-size: .85rem;
+  color: var(--iv-fg-3);
+  line-height: 1.55;
+}
+.modal-body p { margin-bottom: .65rem; }
+.modal-body p:last-child { margin-bottom: 0; }
+
+
+/* =====================================================================
+   LOOK TOGGLES — Mood / Chrome / Palette
+   Set by the Tweaks panel via data-iv-* attributes on <html>.
+   Each block re-binds the design-token custom properties so anything
+   that already uses them (the rest of the stylesheet) follows.
+   ===================================================================== */
+
+/* ---------- MOOD ---------- */
+/* Mission is the default — no override needed. */
+
+/* Daylight: warm cream/parchment background, dark slate text. */
+html[data-iv-mood="daylight"] {
+  --iv-bg: #f6f3eb;
+  --iv-bg-radial: radial-gradient(circle at top, #fffaef 0, #ece7d8 55%);
+  --iv-panel: #fffaef;
+  --iv-panel-translucent: rgba(255, 250, 239, 0.96);
+  --iv-panel-90: rgba(255, 250, 239, 0.90);
+  --iv-panel-85: rgba(255, 250, 239, 0.85);
+  --iv-border-soft: rgba(120, 113, 108, 0.30);
+  --iv-border-subtle: rgba(120, 113, 108, 0.18);
+  --iv-border-dashed: rgba(120, 113, 108, 0.55);
+  --iv-fg-1: #1c1917;
+  --iv-fg-2: #292524;
+  --iv-fg-3: #57534e;
+  --iv-fg-4: #a8a29e;
+  --iv-accent: #c2410c;
+  --iv-accent-glow: rgba(194, 65, 12, 0.55);
+  --iv-accent-soft: rgba(194, 65, 12, 0.35);
+  --iv-state-hover-bg: rgba(120, 113, 108, 0.10);
+}
+html[data-iv-mood="daylight"] body {
+  color: var(--iv-fg-2);
+  background: var(--iv-bg-radial);
+}
+html[data-iv-mood="daylight"] .bg-panel { background: var(--iv-panel); }
+/* Dark Bootstrap modals look wrong on a light theme — flip them. */
+html[data-iv-mood="daylight"] .modal-content.bg-dark {
+  background: #fffaef !important;
+  color: var(--iv-fg-2);
+}
+html[data-iv-mood="daylight"] .modal-body { color: var(--iv-fg-3); }
+html[data-iv-mood="daylight"] .nav-pill-bar {
+  background: rgba(28, 25, 23, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(120, 113, 108, 0.30);
+}
+html[data-iv-mood="daylight"] .nav-pill-item:not(.active) { color: #44403c; }
+
+/* Paper: cartography sepia. */
+html[data-iv-mood="paper"] {
+  --iv-bg: #fbf6e7;
+  --iv-bg-radial: radial-gradient(circle at top, #fefaee 0, #f0e6c4 55%);
+  --iv-panel: #fefaee;
+  --iv-panel-translucent: rgba(254, 250, 238, 0.96);
+  --iv-panel-90: rgba(254, 250, 238, 0.90);
+  --iv-panel-85: rgba(254, 250, 238, 0.85);
+  --iv-border-soft: rgba(146, 85, 28, 0.35);
+  --iv-border-subtle: rgba(146, 85, 28, 0.20);
+  --iv-border-dashed: rgba(146, 85, 28, 0.50);
+  --iv-fg-1: #422006;
+  --iv-fg-2: #7c2d12;
+  --iv-fg-3: #92551c;
+  --iv-fg-4: #c2a76a;
+  --iv-accent: #92400e;
+  --iv-accent-glow: rgba(146, 64, 14, 0.55);
+  --iv-accent-soft: rgba(146, 64, 14, 0.35);
+  --iv-state-hover-bg: rgba(146, 85, 28, 0.10);
+}
+html[data-iv-mood="paper"] body {
+  color: var(--iv-fg-2);
+  background: var(--iv-bg-radial);
+}
+html[data-iv-mood="paper"] .bg-panel { background: var(--iv-panel); }
+html[data-iv-mood="paper"] .modal-content.bg-dark {
+  background: #fefaee !important;
+  color: var(--iv-fg-2);
+}
+html[data-iv-mood="paper"] .modal-body { color: var(--iv-fg-3); }
+html[data-iv-mood="paper"] .nav-pill-bar {
+  background: rgba(146, 85, 28, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(146, 85, 28, 0.30);
+}
+html[data-iv-mood="paper"] .nav-pill-item:not(.active) { color: var(--iv-fg-2); }
+
+/* Light-mood adjustments shared by Daylight + Paper:
+   the .bg-dark text-light body needs explicit color flip and the dropdown
+   menus / dark form controls should follow. */
+html[data-iv-mood="daylight"] body.bg-dark,
+html[data-iv-mood="paper"] body.bg-dark {
+  background: var(--iv-bg-radial) !important;
+  color: var(--iv-fg-2) !important;
+}
+html[data-iv-mood="daylight"] body.text-light,
+html[data-iv-mood="paper"] body.text-light {
+  color: var(--iv-fg-2) !important;
+}
+
+/* === LIGHT-MOOD CHROME OVERRIDES ===
+   A lot of map.css uses hardcoded rgba(15,23,42,…) slate for floating
+   panel fills. Refactoring every one to a token would be invasive, so
+   for the light moods we just wholesale-flip those surfaces here. */
+
+/* Floating panels — translucent cream instead of translucent slate */
+html[data-iv-mood="daylight"] .navbar-iv-inner,
+html[data-iv-mood="daylight"] .map-search,
+html[data-iv-mood="daylight"] .draw-toolbar,
+html[data-iv-mood="daylight"] .map-basemap-toggle,
+html[data-iv-mood="daylight"] .map-basemaps-popup,
+html[data-iv-mood="daylight"] .legend,
+html[data-iv-mood="daylight"] .attribute-toggle-btn,
+html[data-iv-mood="daylight"] .attribute-panel,
+html[data-iv-mood="daylight"] .tweaks-toggle,
+html[data-iv-mood="daylight"] .tweaks-panel,
+html[data-iv-mood="daylight"] .iv-select,
+html[data-iv-mood="paper"] .navbar-iv-inner,
+html[data-iv-mood="paper"] .map-search,
+html[data-iv-mood="paper"] .draw-toolbar,
+html[data-iv-mood="paper"] .map-basemap-toggle,
+html[data-iv-mood="paper"] .map-basemaps-popup,
+html[data-iv-mood="paper"] .legend,
+html[data-iv-mood="paper"] .attribute-toggle-btn,
+html[data-iv-mood="paper"] .attribute-panel,
+html[data-iv-mood="paper"] .tweaks-toggle,
+html[data-iv-mood="paper"] .tweaks-panel,
+html[data-iv-mood="paper"] .iv-select {
+  background: var(--iv-panel-translucent) !important;
+  border-color: var(--iv-border-soft) !important;
+  color: var(--iv-fg-2);
+}
+
+/* Draw toolbar buttons inherit the light fill */
+html[data-iv-mood="daylight"] .draw-toolbar .btn,
+html[data-iv-mood="daylight"] .draw-toolbar .btn-dark,
+html[data-iv-mood="paper"] .draw-toolbar .btn,
+html[data-iv-mood="paper"] .draw-toolbar .btn-dark {
+  background: var(--iv-panel-85) !important;
+  border-color: var(--iv-border-soft) !important;
+  color: var(--iv-fg-2) !important;
+}
+html[data-iv-mood="daylight"] .draw-toolbar .btn:hover,
+html[data-iv-mood="paper"] .draw-toolbar .btn:hover {
+  background: var(--iv-panel-translucent) !important;
+}
+html[data-iv-mood="daylight"] .draw-toolbar .btn.active,
+html[data-iv-mood="daylight"] .draw-toolbar .btn-dark.active,
+html[data-iv-mood="paper"] .draw-toolbar .btn.active,
+html[data-iv-mood="paper"] .draw-toolbar .btn-dark.active {
+  background: var(--iv-accent) !important;
+  border-color: var(--iv-accent) !important;
+  color: #fff !important;
+}
+
+/* Layer-tree dashed connector lines — flip to theme dashed */
+html[data-iv-mood="daylight"] .layer-tree .layer-group.card::before,
+html[data-iv-mood="daylight"] .layer-leaf-list::before,
+html[data-iv-mood="daylight"] .layer-leaf::before,
+html[data-iv-mood="paper"] .layer-tree .layer-group.card::before,
+html[data-iv-mood="paper"] .layer-leaf-list::before,
+html[data-iv-mood="paper"] .layer-leaf::before {
+  border-color: var(--iv-border-dashed) !important;
+}
+
+/* Layer tree text colours */
+html[data-iv-mood="daylight"] .layer-group-header,
+html[data-iv-mood="daylight"] .layer-group-title,
+html[data-iv-mood="daylight"] .layer-label,
+html[data-iv-mood="paper"] .layer-group-header,
+html[data-iv-mood="paper"] .layer-group-title,
+html[data-iv-mood="paper"] .layer-label {
+  color: var(--iv-fg-2);
+}
+html[data-iv-mood="daylight"] .layer-group-header:hover,
+html[data-iv-mood="paper"] .layer-group-header:hover {
+  background: var(--iv-state-hover-bg);
+}
+
+/* Search input + locate buttons */
+html[data-iv-mood="daylight"] .map-search input,
+html[data-iv-mood="daylight"] .map-search .form-control,
+html[data-iv-mood="paper"] .map-search input,
+html[data-iv-mood="paper"] .map-search .form-control {
+  color: var(--iv-fg-1);
+  background: transparent;
+}
+html[data-iv-mood="daylight"] .map-search input::placeholder,
+html[data-iv-mood="paper"] .map-search input::placeholder {
+  color: var(--iv-fg-3);
+}
+html[data-iv-mood="daylight"] .map-search .btn-icon,
+html[data-iv-mood="paper"] .map-search .btn-icon {
+  color: var(--iv-fg-2) !important;
+}
+
+/* Tweaks panel head divider + close button visible on light */
+html[data-iv-mood="daylight"] .tweaks-panel-head,
+html[data-iv-mood="paper"] .tweaks-panel-head {
+  border-bottom-color: var(--iv-border-subtle) !important;
+}
+html[data-iv-mood="daylight"] .tweaks-panel-title,
+html[data-iv-mood="paper"] .tweaks-panel-title {
+  color: var(--iv-fg-1);
+}
+html[data-iv-mood="daylight"] .tweaks-panel-close,
+html[data-iv-mood="paper"] .tweaks-panel-close {
+  color: var(--iv-fg-3);
+}
+html[data-iv-mood="daylight"] .tweaks-panel-close:hover,
+html[data-iv-mood="paper"] .tweaks-panel-close:hover {
+  background: var(--iv-state-hover-bg);
+  color: var(--iv-fg-1);
+}
+html[data-iv-mood="daylight"] .tweaks-tile,
+html[data-iv-mood="paper"] .tweaks-tile {
+  background: rgba(255, 255, 255, .55) !important;
+  border-color: rgba(28, 25, 23, .12) !important;
+}
+html[data-iv-mood="daylight"] .tweaks-tile:hover,
+html[data-iv-mood="paper"] .tweaks-tile:hover {
+  background: rgba(255, 255, 255, .85) !important;
+}
+html[data-iv-mood="daylight"] .tweaks-tile.is-active,
+html[data-iv-mood="daylight"] .tweaks-tile[aria-checked="true"],
+html[data-iv-mood="paper"] .tweaks-tile.is-active,
+html[data-iv-mood="paper"] .tweaks-tile[aria-checked="true"] {
+  border-color: var(--iv-fg-1) !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 2px var(--iv-accent-soft) !important;
+}
+html[data-iv-mood="daylight"] .tweaks-tile-lbl,
+html[data-iv-mood="paper"] .tweaks-tile-lbl {
+  color: var(--iv-fg-2);
+}
+html[data-iv-mood="daylight"] .tweaks-tile.is-active .tweaks-tile-lbl,
+html[data-iv-mood="paper"] .tweaks-tile.is-active .tweaks-tile-lbl {
+  color: var(--iv-fg-1);
+}
+
+/* Tweaks slider track in light moods */
+html[data-iv-mood="daylight"] .tweaks-slider,
+html[data-iv-mood="paper"] .tweaks-slider {
+  background: rgba(28, 25, 23, .15);
+}
+
+/* Section labels stay all-caps but in light moods need a darker tint */
+html[data-iv-mood="daylight"] .tweaks-section-label,
+html[data-iv-mood="paper"] .tweaks-section-label {
+  color: var(--iv-fg-3);
+}
+
+/* Brand divider line in nav */
+html[data-iv-mood="daylight"] .navbar-divider,
+html[data-iv-mood="paper"] .navbar-divider {
+  background: var(--iv-border-soft);
+}
+
+/* Active layer chip variant */
+html[data-iv-mood="daylight"] .nav-status,
+html[data-iv-mood="paper"] .nav-status {
+  color: var(--iv-fg-3);
+}
+
+/* Modal close button cross */
+html[data-iv-mood="daylight"] .btn-close.btn-close-white,
+html[data-iv-mood="paper"] .btn-close.btn-close-white {
+  filter: none;
+}
+
+/* Bootstrap form controls inside the layer tree (checkboxes already
+   accent-coloured); just ensure the modal text reads */
+html[data-iv-mood="daylight"] .modal-content.bg-dark,
+html[data-iv-mood="paper"] .modal-content.bg-dark {
+  color: var(--iv-fg-2) !important;
+}
+html[data-iv-mood="daylight"] .modal-header.border-secondary,
+html[data-iv-mood="paper"] .modal-header.border-secondary {
+  border-bottom-color: var(--iv-border-subtle) !important;
+}
+
+/* Empty state card in sidebar */
+html[data-iv-mood="daylight"] .layer-tree-empty,
+html[data-iv-mood="paper"] .layer-tree-empty {
+  background: rgba(28, 25, 23, 0.04);
+  border-color: var(--iv-border-soft);
+}
+html[data-iv-mood="daylight"] .iv-empty-icon,
+html[data-iv-mood="paper"] .iv-empty-icon {
+  color: var(--iv-fg-3);
+}
+
+/* Analysis chart card */
+html[data-iv-mood="daylight"] .iv-chart-card,
+html[data-iv-mood="paper"] .iv-chart-card {
+  background: var(--iv-panel) !important;
+  border-color: var(--iv-border-subtle) !important;
+}
+html[data-iv-mood="daylight"] .iv-chart-bar-wrap,
+html[data-iv-mood="paper"] .iv-chart-bar-wrap {
+  background: rgba(28, 25, 23, 0.05);
+}
+
+/* Marine: deep ocean blues — fits the irrigation/water theme. Stays
+   dark, but tilts the palette away from neutral slate towards cyan. */
+html[data-iv-mood="marine"] {
+  --iv-bg: #021823;
+  --iv-bg-radial: radial-gradient(circle at top, #0f3a55 0, #021823 55%);
+  --iv-panel: #03283a;
+  --iv-panel-translucent: rgba(8, 47, 73, 0.96);
+  --iv-panel-90: rgba(8, 47, 73, 0.90);
+  --iv-panel-85: rgba(8, 47, 73, 0.85);
+  --iv-border-soft: rgba(103, 232, 249, 0.30);
+  --iv-border-subtle: rgba(103, 232, 249, 0.18);
+  --iv-border-dashed: rgba(34, 211, 238, 0.55);
+  --iv-fg-1: #ecfeff;
+  --iv-fg-2: #cffafe;
+  --iv-fg-3: #67e8f9;
+  --iv-fg-4: #155e75;
+  --iv-accent: #06b6d4;
+  --iv-accent-glow: rgba(6, 182, 212, 0.55);
+  --iv-accent-soft: rgba(6, 182, 212, 0.35);
+  --iv-state-hover-bg: rgba(103, 232, 249, 0.10);
+}
+html[data-iv-mood="marine"] body {
+  color: var(--iv-fg-2);
+  background: var(--iv-bg-radial);
+}
+html[data-iv-mood="marine"] .bg-panel { background: var(--iv-panel); }
+html[data-iv-mood="marine"] .modal-content.bg-dark {
+  background: #03283a !important;
+  color: var(--iv-fg-2);
+}
+
+/* ---------- CHROME ---------- */
+/* Pillows is the default — fully rounded, current behaviour. */
+
+/* Sharp: collapse pill / large radii to flat corners. */
+html[data-iv-chrome="sharp"] {
+  --iv-radius-sm: 0;
+  --iv-radius-md: 0;
+  --iv-radius-lg: 0;
+  --iv-radius-xl: 0;
+  --iv-radius-pill: 4px;
+}
+html[data-iv-chrome="sharp"] .navbar-iv-inner,
+html[data-iv-chrome="sharp"] .nav-pill-bar,
+html[data-iv-chrome="sharp"] .nav-pill-item,
+html[data-iv-chrome="sharp"] .map-search,
+html[data-iv-chrome="sharp"] .draw-toolbar,
+html[data-iv-chrome="sharp"] .attribute-toggle-btn,
+html[data-iv-chrome="sharp"] .nav-status,
+html[data-iv-chrome="sharp"] .iv-select,
+html[data-iv-chrome="sharp"] .draw-toolbar .btn,
+html[data-iv-chrome="sharp"] .map-basemap-toggle,
+html[data-iv-chrome="sharp"] .map-basemaps-popup,
+html[data-iv-chrome="sharp"] .legend,
+html[data-iv-chrome="sharp"] .attribute-panel,
+html[data-iv-chrome="sharp"] .tweaks-toggle,
+html[data-iv-chrome="sharp"] .tweaks-panel,
+html[data-iv-chrome="sharp"] .tweaks-tile,
+html[data-iv-chrome="sharp"] .modal-content.bg-dark {
+  border-radius: 4px !important;
+}
+
+/* Hairline: minimal fills, just outlines. */
+html[data-iv-chrome="hairline"] .navbar-iv-inner,
+html[data-iv-chrome="hairline"] .map-search,
+html[data-iv-chrome="hairline"] .draw-toolbar,
+html[data-iv-chrome="hairline"] .attribute-toggle-btn,
+html[data-iv-chrome="hairline"] .map-basemap-toggle,
+html[data-iv-chrome="hairline"] .map-basemaps-popup,
+html[data-iv-chrome="hairline"] .legend,
+html[data-iv-chrome="hairline"] .attribute-panel,
+html[data-iv-chrome="hairline"] .tweaks-toggle,
+html[data-iv-chrome="hairline"] .tweaks-panel,
+html[data-iv-chrome="hairline"] .tweaks-tile {
+  background: transparent !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+html[data-iv-chrome="hairline"] .draw-toolbar .btn,
+html[data-iv-chrome="hairline"] .draw-toolbar .btn-dark {
+  background: transparent !important;
+}
+
+/* ---------- PALETTE ---------- */
+/* The map raster keeps its server-rendered colours — we only restyle the
+   legend swatches and analysis bar chart, which read from CSS vars. */
+html[data-iv-palette="heatmap"] {
+  --iv-suit-n: #1e3a8a;
+  --iv-suit-s1: #b91c1c;
+  --iv-suit-s2: #f97316;
+  --iv-suit-s3: #facc15;
+}
+html[data-iv-palette="earthen"] {
+  --iv-suit-n: #c4b59c;
+  --iv-suit-s1: #134e4a;
+  --iv-suit-s2: #0f766e;
+  --iv-suit-s3: #d97706;
 }
 
 

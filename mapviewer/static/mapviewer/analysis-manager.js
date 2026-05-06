@@ -5,6 +5,10 @@
 
   const API = window.MAPVIEWER || (window.MAPVIEWER = {});
 
+  // Translation helper — falls back to the English string if ivT() isn't loaded yet.
+  const _t = (key, fallback) =>
+    typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
+
   // ----------------- Socio-economic config (from your matrix) -----------------
   // One entry per row in the spreadsheet
   const SOCIO_INDICATORS = [
@@ -190,12 +194,12 @@
     // ----------------- Freehand poly analysis (soil suitability) -----------------
     async runFreehandAnalysis() {
       if (!this.currentSuitability) {
-        this.setStatus("Select a suitability map first.", true);
+        this.setStatus(_t("status_select_suit", "Select a suitability map first."), true);
         return;
       }
       const fc = this.draw && this.draw.getAll ? this.draw.getAll() : null;
       if (!fc || !fc.features || !fc.features.length) {
-        this.setStatus("Draw a polygon first.", true);
+        this.setStatus(_t("status_draw_polygon_first", "Draw a polygon first."), true);
         return;
       }
 
@@ -220,7 +224,7 @@
       }
 
       try {
-        this.setStatus("Running analysis…", false);
+        this.setStatus(_t("status_running_analysis", "Running analysis…"), false);
 
         const resp = await fetch(this.geeAnalyzeUrl, {
           method: "POST",
@@ -269,10 +273,10 @@
         }
 
         this.renderAnalysis("Polygon", items);
-        this.setStatus("Analysis complete.", false);
+        this.setStatus(_t("status_analysis_complete", "Analysis complete."), false);
       } catch (err) {
         console.error("Freehand analysis failed", err);
-        this.setStatus("Analysis failed.", true);
+        this.setStatus(_t("status_analysis_failed", "Analysis failed."), true);
       }
     }
 
@@ -284,11 +288,11 @@
      */
     async runBoundaryAnalysis(feature, label, mode) {
       if (!this.currentSuitability) {
-        this.setStatus("Select a suitability map first.", true);
+        this.setStatus(_t("status_select_suit", "Select a suitability map first."), true);
         return;
       }
       if (!feature || !feature.geometry) {
-        this.setStatus("Click a boundary polygon first.", true);
+        this.setStatus(_t("status_click_boundary_first", "Click a boundary polygon first."), true);
         return;
       }
 
@@ -342,7 +346,7 @@
       }
 
       try {
-        this.setStatus("Running boundary analysis…", false);
+        this.setStatus(_t("status_running_boundary_analysis", "Running boundary analysis…"), false);
 
         const resp = await fetch(this.geeAnalyzeUrl, {
           method: "POST",
@@ -394,10 +398,10 @@
         }
 
         this.renderAnalysis(name, items);
-        this.setStatus("Boundary analysis complete.", false);
+        this.setStatus(_t("status_boundary_analysis_complete", "Boundary analysis complete."), false);
       } catch (err) {
         console.error("Boundary analysis failed", err);
-        this.setStatus("Boundary analysis failed.", true);
+        this.setStatus(_t("status_boundary_analysis_failed", "Boundary analysis failed."), true);
       }
     }
 
@@ -519,7 +523,7 @@ renderSocioEconomicEditor(label) {
             '<em>Scores cleared. Set scores again and click “Compute suitability”.</em>';
         }
 
-        this.setStatus("Socio-economic scores cleared.", false);
+        this.setStatus(_t("status_socio_scores_cleared", "Socio-economic scores cleared."), false);
       });
     }
 
@@ -615,12 +619,15 @@ renderSocioEconomicEditor(label) {
     ensureSocioModal() {
       if (this._socioModalEl && this._socioModal) return;
 
+      // data-i18n attrs let ivApplyTranslations() retranslate this modal
+      // each time the user switches languages — no rebuild needed.
       const modalHtml = `
         <div class="modal fade" id="socioCriteriaModal" tabindex="-1" aria-hidden="true">
           <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content bg-dark text-light">
               <div class="modal-header border-secondary">
-                <h5 class="modal-title" id="socioCriteriaModalLabel">
+                <h5 class="modal-title" id="socioCriteriaModalLabel"
+                    data-i18n="socio_modal_title">
                   Indicator scoring
                 </h5>
                 <button type="button"
@@ -634,12 +641,14 @@ renderSocioEconomicEditor(label) {
               <div class="modal-footer border-secondary">
                 <button type="button"
                         class="btn btn-outline-light btn-sm"
-                        data-bs-dismiss="modal">
+                        data-bs-dismiss="modal"
+                        data-i18n="socio_modal_cancel">
                   Cancel
                 </button>
                 <button type="button"
                         class="btn btn-primary btn-sm"
-                        id="socioCriteriaSaveBtn">
+                        id="socioCriteriaSaveBtn"
+                        data-i18n="socio_modal_save_score">
                   Save score
                 </button>
               </div>
@@ -651,6 +660,11 @@ renderSocioEconomicEditor(label) {
       const wrapper = document.createElement("div");
       wrapper.innerHTML = modalHtml;
       document.body.appendChild(wrapper.firstElementChild);
+
+      // Translate modal contents to the active language right after insert
+      if (typeof window.ivApplyTranslations === "function") {
+        window.ivApplyTranslations(window.ivCurrentLang || "en");
+      }
 
       this._socioModalEl = document.getElementById("socioCriteriaModal");
       const titleEl = document.getElementById("socioCriteriaModalLabel");

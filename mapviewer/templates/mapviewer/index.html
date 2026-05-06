@@ -1,21 +1,34 @@
 {% load static %}
 <!doctype html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
   <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <title>Irrigation Viewer</title>
 
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+          crossorigin="anonymous"/>
 
     <!-- Icons -->
     <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+          href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+          integrity="sha384-tViUnnbYAV00FLIhhi3v/dWt3Jxw4gZQcNoSCxCIFNJVCx7/D55/wXsrNIRANwdD"
+          crossorigin="anonymous"/>
 
     <!-- MapLibre + Draw CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css"/>
-    <link rel="stylesheet" href="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.css"/>
+    <link rel="stylesheet"
+          href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css"
+          integrity="sha384-p5cy4wHtKSqjnLUNjQ+8ffCwUp0vlLS+6lg1lc3qqXax2E1EmVCMCAimU+R0MOZH"
+          crossorigin="anonymous"/>
+    <link rel="stylesheet"
+          href="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.css"
+          integrity="sha384-4Y8+jUOlZUhQTrhjMAldWS0wpm/HjKvwEzKSXzLoaf3HJozxCpjiRXmXq71XbLT6"
+          crossorigin="anonymous"/>
 
+    <!-- Design tokens (colors & type) — must load before map.css -->
+    <link rel="stylesheet" href="{% static 'mapviewer/colors_and_type.css' %}"/>
     <!-- App CSS (merged styles) -->
     <link rel="stylesheet" href="{% static 'mapviewer/map.css' %}"/>
   </head>
@@ -54,23 +67,28 @@
     <!-- Top nav -->
     <nav class="navbar navbar-dark navbar-expand-lg fixed-top navbar-iv">
       <div class="container-fluid navbar-iv-inner">
-        <!-- Brand left -->
-        <a class="navbar-brand d-flex align-items-center" href="#">
-          <img src="{% static 'mapviewer/logo.svg' %}" alt="Irrigation Viewer" height="24" class="me-2"/>
-          <span class="fw-semibold">Irrigation Viewer</span>
-        </a>
+        <!-- Left cluster: brand + status -->
+        <div class="navbar-iv-left">
+          <a class="navbar-brand-iv" href="#" aria-label="Irrigation Viewer home">
+            <img src="{% static 'mapviewer/logo.svg' %}"
+                 alt="Irrigation Viewer"
+                 class="navbar-brand-icon"/>
+            <span class="navbar-brand-text">Irrigation Viewer</span>
+          </a>
 
-        <!-- Active layer next to brand -->
-        <span id="activeLayer" class="nav-status ms-3">
-          <span data-i18n="status_active_label">Active:</span>
-          <span class="text-secondary">none</span>
-        </span>
+          <span class="navbar-divider" aria-hidden="true"></span>
 
-        <!-- Right: Home / About / Help + language -->
-        <div class="d-flex align-items-center ms-auto gap-2">
+          <span id="activeLayer" class="nav-status">
+            <span class="nav-status-label" data-i18n="status_active_label">Active:</span>
+            <span class="text-secondary nav-status-value">none</span>
+          </span>
+        </div>
+
+        <!-- Centre cluster: navigation pills -->
+        <div class="navbar-iv-centre">
           <div class="nav-pill-bar">
             <button id="navHomeBtn" type="button" class="nav-pill-item active">
-              <i class="bi bi-house-door-fill nav-pill-icon"></i>
+              <i class="bi bi-house-door-fill nav-pill-icon" aria-hidden="true"></i>
               <span class="nav-pill-label" data-i18n="nav_home">Home</span>
             </button>
             <button id="navAboutBtn"
@@ -78,7 +96,7 @@
                     class="nav-pill-item"
                     data-bs-toggle="modal"
                     data-bs-target="#aboutModal">
-              <i class="bi bi-info-circle nav-pill-icon"></i>
+              <i class="bi bi-info-circle nav-pill-icon" aria-hidden="true"></i>
               <span class="nav-pill-label" data-i18n="nav_about">About</span>
             </button>
             <button id="navHelpBtn"
@@ -86,10 +104,27 @@
                     class="nav-pill-item"
                     data-bs-toggle="modal"
                     data-bs-target="#helpModal">
-              <i class="bi bi-question-circle nav-pill-icon"></i>
+              <i class="bi bi-question-circle nav-pill-icon" aria-hidden="true"></i>
               <span class="nav-pill-label" data-i18n="nav_help">Help</span>
             </button>
           </div>
+        </div>
+
+        <!-- Right cluster: partner + language -->
+        <div class="navbar-iv-right">
+          <!-- Partner logo -->
+          <a href="https://www.iwmi.cgiar.org/"
+             target="_blank"
+             rel="noopener"
+             class="navbar-partner"
+             aria-label="International Water Management Institute (IWMI)">
+            <span class="navbar-partner-prefix" data-i18n="partner_built_with">
+              Built by
+            </span>
+            <img src="{% static 'mapviewer/iwmi_logo.png' %}"
+                 alt="IWMI"
+                 class="navbar-partner-logo"/>
+          </a>
 
           <!-- language dropdown -->
           <div class="dropdown">
@@ -99,7 +134,7 @@
                     data-lang="en"
                     data-bs-toggle="dropdown"
                     aria-expanded="false">
-              <i class="bi bi-translate"></i>
+              <i class="bi bi-translate" aria-hidden="true"></i>
               <span data-i18n="lang_current">EN</span>
             </button>
             <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
@@ -122,27 +157,32 @@
     <div class="container-fluid p-0">
       <div class="row g-0 with-nav">
         <!-- Sidebar -->
-        <aside class="sidebar col-12 col-md-4 col-lg-3 bg-panel p-3 p-md-4 border-end border-secondary-subtle overflow-auto">
-          <!-- Country dropdown -->
-          <div class="d-flex align-items-center justify-content-between mb-3">
-            <div>
-              <h1 class="h6 fw-bold mb-1" data-i18n="country_title">Country</h1>
-              <p class="small text-secondary mb-0" data-i18n="country_help">
-                Zoom layers to a basin country.
-              </p>
+        <aside id="sidebarPanel"
+               class="sidebar col-12 col-md-4 col-lg-3 bg-panel p-3 p-md-4 border-end border-secondary-subtle overflow-auto"
+               aria-label="Layers and analysis panel">
+          <!-- Country section -->
+          <section class="iv-side-section iv-side-country">
+            <div class="iv-side-section-row">
+              <div class="iv-side-section-text">
+                <h1 class="iv-side-h1" data-i18n="country_title">Country</h1>
+                <p class="iv-side-help" data-i18n="country_help">
+                  Zoom layers to a basin country.
+                </p>
+              </div>
+              <select id="countrySelect" class="iv-select">
+                <option value="Zimbabwe" selected>Zimbabwe</option>
+                <option value="South Africa">South Africa</option>
+                <option value="Angola">Angola</option>
+              </select>
             </div>
-            <select id="countrySelect"
-                    class="form-select form-select-sm w-auto bg-dark text-light border-secondary">
-              <option value="Zimbabwe" selected>Zimbabwe</option>
-              <option value="South Africa">South Africa</option>
-              <option value="Angola">Angola</option>
-            </select>
-          </div>
+          </section>
 
-          <h2 class="h5 fw-bold mb-3" data-i18n="layers_title">Layers</h2>
-          <p class="text-secondary small mb-3" data-i18n="layers_help">
-            Currently configured for Zimbabwe only. Select Zimbabwe to view suitability, administrative and socio-economic layers.
-          </p>
+          <!-- Layers section -->
+          <section class="iv-side-section">
+            <h2 class="iv-side-h2" data-i18n="layers_title">Layers</h2>
+            <p class="iv-side-help iv-side-help--block" data-i18n="layers_help">
+              Currently configured for Zimbabwe only. Select Zimbabwe to view suitability, administrative and socio-economic layers.
+            </p>
 
           <ul class="layer-tree list-unstyled small mb-3">
             <!-- Suitability -->
@@ -161,10 +201,11 @@
                   {% for layer in layers %}
                     {% if 'projects/' in layer.dataset %}
                       <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0"
-                             data-country="Zimbabwe">
+                             data-country="{{ layer.country|default:'Zimbabwe' }}">
                         <input class="form-check-input flex-shrink-0" type="checkbox"
                                name="layer" value="{{ layer.dataset }}" data-id="{{ layer.id }}"/>
-                        <span class="layer-label text-truncate">{{ layer.label }}</span>
+                        <span class="layer-label"
+                              data-i18n="{{ layer.label_key }}">{{ layer.label }}</span>
                       </label>
                     {% endif %}
                   {% endfor %}
@@ -188,11 +229,60 @@
                   {% for layer in layers %}
                     {% if "BOUNDARY_" in layer.dataset %}
                       <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0"
-                             data-country="Zimbabwe">
+                             data-country="{{ layer.country|default:'Zimbabwe' }}">
                         <input class="form-check-input flex-shrink-0" type="checkbox"
                                name="layer" value="{{ layer.dataset }}" data-id="{{ layer.id }}"/>
-                        <span class="layer-label text-truncate">{{ layer.label }}</span>
+                        <span class="layer-label"
+                              data-i18n="{{ layer.label_key }}">{{ layer.label }}</span>
                       </label>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </li>
+
+            <!-- Irrigation maps (date-picker driven) -->
+            <li class="layer-group card open">
+              <div class="layer-group-header layer-toggle">
+                <div class="layer-group-main">
+                  <i class="bi bi-folder2-open layer-group-icon"></i>
+                  <span class="layer-group-title" data-i18n="group_irrigation">Irrigation maps</span>
+                </div>
+                <span class="layer-group-chevron">
+                  <i class="bi bi-chevron-down"></i>
+                </span>
+              </div>
+              <div class="card-body">
+                <div id="group-irrigation" class="layer-leaf-list vstack gap-1">
+                  {% for layer in layers %}
+                    {% if layer.has_date_picker %}
+                      <div class="layer-leaf layer-leaf-with-picker"
+                           data-country="{{ layer.country|default:'Zimbabwe' }}"
+                           data-layer-id="{{ layer.id }}"
+                           data-ic-kind="{{ layer.ic_kind }}">
+                        <label class="form-check d-flex align-items-center gap-2 m-0">
+                          <input class="form-check-input flex-shrink-0" type="checkbox"
+                                 name="layer" value="{{ layer.dataset }}" data-id="{{ layer.id }}"/>
+                          <span class="layer-label"
+                                data-i18n="{{ layer.label_key }}">{{ layer.label }}</span>
+                        </label>
+                        <div class="layer-picker">
+                          <label class="layer-picker-row">
+                            <span class="layer-picker-lbl" data-i18n="picker_period">Period</span>
+                            <select class="layer-picker-period" disabled>
+                              <option value="" data-i18n="picker_loading">Loading…</option>
+                            </select>
+                          </label>
+                          <label class="layer-picker-row">
+                            <span class="layer-picker-lbl" data-i18n="picker_band">Band</span>
+                            <select class="layer-picker-band">
+                              <option value="filtered" data-i18n="picker_band_filtered">Filtered</option>
+                              <option value="raw"      data-i18n="picker_band_raw">Raw</option>
+                              <option value="probability" data-i18n="picker_band_probability">Probability</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
                     {% endif %}
                   {% endfor %}
                 </div>
@@ -218,7 +308,8 @@
                            name="layer"
                            value="projects/tethys-app-1/assets/masvingo_irrigation_schemes"
                            data-id="SOC_MASVINGO_SCHEMES"/>
-                    <span class="layer-label text-truncate">Masvingo (asset)</span>
+                    <span class="layer-label"
+                          data-i18n="layer_socio_masvingo">Masvingo (asset)</span>
                   </label>
 
                   <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0"
@@ -227,7 +318,8 @@
                            name="layer"
                            value="projects/tethys-app-1/assets/solar_pump_providers"
                            data-id="SOC_SOLAR_PUMP_PROVIDERS"/>
-                    <span class="layer-label text-truncate">Solar pump providers (asset)</span>
+                    <span class="layer-label"
+                          data-i18n="layer_socio_solar_pumps">Solar pump providers (asset)</span>
                   </label>
 
                   <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0"
@@ -236,7 +328,8 @@
                            name="layer"
                            value="projects/tethys-app-1/assets/matebeland_south_irrigation_schemes"
                            data-id="SOC_MAT_SOUTH_SCHEMES"/>
-                    <span class="layer-label text-truncate">Matabeleland South (asset)</span>
+                    <span class="layer-label"
+                          data-i18n="layer_socio_mat_south">Matabeleland South (asset)</span>
                   </label>
 
                   <label class="form-check d-flex align-items-center gap-2 layer-leaf m-0"
@@ -245,33 +338,63 @@
                            name="layer"
                            value="projects/tethys-app-1/assets/mashonaland_central_irrigation_schemes"
                            data-id="SOC_MASH_CENTRAL_SCHEMES"/>
-                    <span class="layer-label text-truncate">Mashonaland Central (asset)</span>
+                    <span class="layer-label"
+                          data-i18n="layer_socio_mash_central">Mashonaland Central (asset)</span>
                   </label>
                 </div>
               </div>
             </li>
           </ul>
 
-          <div class="mt-2 small text-secondary" id="statusBox"></div>
-
-          <hr class="border-secondary-subtle my-4"/>
-
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h2 class="h6 fw-bold mb-0" data-i18n="analysis_title">Analysis</h2>
-          </div>
-
-          <div id="analysisBox" class="small text-secondary mb-2" data-i18n="analysis_help">
-            <em>Pick a suitability map, then draw a polygon or click a boundary and use “Run analysis” in the popup.</em>
-          </div>
-
-          <div class="card bg-panel border-0 mb-2">
-            <div class="card-body p-2">
-              <div style="height:220px;">
-                <canvas id="irr-chart"></canvas>
+            <!-- Shown when the selected country has no configured layers -->
+            <div id="layerTreeEmpty"
+                 class="layer-tree-empty d-none"
+                 role="status"
+                 aria-live="polite">
+              <i class="bi bi-layers iv-empty-icon" aria-hidden="true"></i>
+              <div class="iv-empty-text">
+                <div class="iv-empty-title"
+                     data-i18n="layers_not_configured_title">
+                  Layers not available
+                </div>
+                <div class="iv-empty-sub"
+                     id="layerTreeEmptyText"
+                     data-i18n="layers_not_configured">
+                  Layers for this country are not configured yet.
+                </div>
               </div>
             </div>
-          </div>
+
+            <div class="iv-status-box" id="statusBox"></div>
+          </section>
+
+          <!-- Analysis section -->
+          <section class="iv-side-section">
+            <h2 class="iv-side-h2" data-i18n="analysis_title">Analysis</h2>
+            <div id="analysisBox" class="iv-side-help iv-side-help--block" data-i18n="analysis_help">
+              <em>Pick a suitability map, then draw a polygon or click a boundary and use “Run analysis” in the popup.</em>
+            </div>
+
+            <div class="iv-chart-card">
+              <div id="irr-chart" class="iv-chart" aria-live="polite">
+                <div class="iv-chart-empty" data-i18n="chart_empty">
+                  No analysis yet. Draw a polygon or click a boundary.
+                </div>
+              </div>
+            </div>
+          </section>
         </aside>
+
+        <!-- Drag handle — sits between sidebar and map column. Pointer-events
+             unify mouse/touch/pen via setPointerCapture in ui.js. -->
+        <div id="sidebarResizer"
+             class="sidebar-resizer d-none d-md-block"
+             role="separator"
+             aria-orientation="vertical"
+             aria-controls="sidebarPanel"
+             aria-label="Resize sidebar"
+             title="Drag to resize"
+             tabindex="0"></div>
 
         <!-- Map panel -->
         <main class="map-col col-12 col-md-8 col-lg-9 position-relative overflow-hidden">
@@ -279,8 +402,11 @@
           <button id="sidebarToggle"
                   type="button"
                   class="btn btn-outline-light btn-sm sidebar-toggle-btn"
-                  title="Hide sidebar">
-            <i class="bi bi-layout-sidebar-inset"></i>
+                  title="Hide sidebar"
+                  aria-label="Hide sidebar"
+                  aria-expanded="true"
+                  aria-controls="sidebarPanel">
+            <i class="bi bi-layout-sidebar-inset" aria-hidden="true"></i>
           </button>
 
           <div id="map" class="map-host"></div>
@@ -297,12 +423,16 @@
             </div>
           </div>
 
-          <!-- Attribute toggle button -->
+          <!-- Attribute toggle (icon-only FAB) -->
           <button id="attributeToggleBtn"
                   type="button"
-                  class="btn btn-outline-light btn-sm attribute-toggle-btn">
-            <i class="bi bi-table"></i>
-            <span data-i18n="attr_toggle">Attributes</span>
+                  class="attribute-toggle-btn"
+                  aria-pressed="false"
+                  aria-controls="attributePanel"
+                  aria-label="Show attribute tables"
+                  title="Attributes"
+                  data-i18n-title="attr_toggle">
+            <i class="bi bi-table" aria-hidden="true"></i>
           </button>
 
           <!-- Search / locate widget (top-left) -->
@@ -336,27 +466,38 @@
             <button type="button"
                     class="btn btn-dark btn-sm active"
                     data-mode="select"
-                    title="Pan / select shapes">
-              <i class="bi bi-cursor"></i>
+                    title="Pan / select shapes"
+                    aria-label="Pan or select shapes"
+                    aria-pressed="true">
+              <i class="bi bi-cursor" aria-hidden="true"></i>
             </button>
             <button type="button"
                     class="btn btn-dark btn-sm"
                     data-mode="polygon"
-                    title="Draw polygon">
-              <i class="bi bi-pentagon-fill"></i>
+                    title="Draw polygon"
+                    aria-label="Draw polygon"
+                    aria-pressed="false">
+              <i class="bi bi-pentagon-fill" aria-hidden="true"></i>
             </button>
             <button type="button"
                     class="btn btn-dark btn-sm"
                     data-mode="clear"
-                    title="Clear drawings">
-              <i class="bi bi-trash3"></i>
+                    title="Clear drawings"
+                    aria-label="Clear drawings">
+              <i class="bi bi-trash3" aria-hidden="true"></i>
             </button>
           </div>
 
           <!-- Basemap gallery -->
-          <div id="basemapToggle" class="map-basemap-toggle" title="Basemap gallery">
-            <i class="bi bi-layers-fill"></i>
-          </div>
+          <button id="basemapToggle"
+                  type="button"
+                  class="map-basemap-toggle"
+                  title="Basemap gallery"
+                  aria-label="Toggle basemap gallery"
+                  aria-expanded="false"
+                  aria-controls="basemapSwitcher">
+            <i class="bi bi-layers-fill" aria-hidden="true"></i>
+          </button>
 
           <div id="basemapSwitcher" class="map-basemaps-popup" aria-label="Basemap gallery">
             <div class="map-basemaps-header">
@@ -388,6 +529,236 @@
           <!-- Legend -->
           <div id="legend" class="legend" style="display:none;"></div>
 
+          <!-- Tweaks FAB -->
+          <button id="tweaksToggle"
+                  type="button"
+                  class="tweaks-toggle"
+                  aria-label="Open tweaks panel"
+                  aria-expanded="false"
+                  aria-controls="tweaksPanel"
+                  title="Tweaks">
+            <i class="bi bi-sliders" aria-hidden="true"></i>
+          </button>
+
+          <!-- Tweaks panel -->
+          <aside id="tweaksPanel"
+                 class="tweaks-panel d-none"
+                 role="dialog"
+                 aria-modal="false"
+                 aria-labelledby="tweaksPanelTitle">
+            <header class="tweaks-panel-head">
+              <h2 id="tweaksPanelTitle"
+                  class="tweaks-panel-title"
+                  data-i18n="tweaks_title">
+                Tweaks
+              </h2>
+              <button type="button"
+                      id="tweaksClose"
+                      class="tweaks-panel-close"
+                      aria-label="Close tweaks panel">
+                <i class="bi bi-x-lg" aria-hidden="true"></i>
+              </button>
+            </header>
+
+            <div class="tweaks-panel-body">
+              <section class="tweaks-section">
+                <div class="tweaks-section-label" data-i18n="tweaks_mood">Mood</div>
+                <div class="tweaks-tile-grid tweaks-tile-grid--4"
+                     id="tweakMood"
+                     role="radiogroup"
+                     aria-label="Mood">
+                  <button type="button" role="radio" aria-checked="true"
+                          class="tweaks-tile is-active" data-mood="mission">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect width="80" height="56" fill="#020617"/>
+                      <circle cx="40" cy="20" r="22" fill="#1d263b"/>
+                      <circle cx="62" cy="14" r="3" fill="#22c55e"/>
+                      <circle cx="68" cy="20" r="3" fill="#2563eb"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_mood_mission">Mission</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-mood="daylight">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect width="80" height="56" fill="#f6f3eb"/>
+                      <circle cx="40" cy="56" r="34" fill="#ece7d8"/>
+                      <rect x="58" y="12" width="12" height="12" rx="2" fill="#c2410c"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_mood_daylight">Daylight</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-mood="paper">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect width="80" height="56" fill="#fbf6e7"/>
+                      <path d="M0 30 Q20 20 40 30 T80 28" stroke="#92551c" stroke-width="1.5" fill="none"/>
+                      <path d="M0 42 Q20 34 40 42 T80 40" stroke="#92551c" stroke-width="1.5" fill="none" opacity=".55"/>
+                      <circle cx="22" cy="22" r="3" fill="#7c2d12"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_mood_paper">Paper</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-mood="marine">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <defs>
+                        <linearGradient id="ivMarineGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%"  stop-color="#082f49"/>
+                          <stop offset="100%" stop-color="#0f5273"/>
+                        </linearGradient>
+                      </defs>
+                      <rect width="80" height="56" fill="url(#ivMarineGrad)"/>
+                      <path d="M0 38 Q20 32 40 38 T80 36" stroke="#67e8f9" stroke-width="1.5" fill="none" opacity=".75"/>
+                      <path d="M0 46 Q20 42 40 46 T80 44" stroke="#67e8f9" stroke-width="1.5" fill="none" opacity=".45"/>
+                      <circle cx="62" cy="16" r="3" fill="#22d3ee"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_mood_marine">Marine</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="tweaks-section">
+                <div class="tweaks-section-label" data-i18n="tweaks_chrome">Chrome</div>
+                <div class="tweaks-tile-grid"
+                     id="tweakChrome"
+                     role="radiogroup"
+                     aria-label="Chrome">
+                  <button type="button" role="radio" aria-checked="true"
+                          class="tweaks-tile is-active" data-chrome="pillows">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect width="80" height="56" fill="#0b1220"/>
+                      <rect x="8"  y="18" width="22" height="20" rx="10" fill="#2563eb"/>
+                      <rect x="34" y="18" width="22" height="20" rx="10" fill="#334155"/>
+                      <rect x="60" y="18" width="14" height="20" rx="7"  fill="#334155"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_chrome_pillows">Pillows</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-chrome="sharp">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect width="80" height="56" fill="#0b1220"/>
+                      <rect x="8"  y="18" width="22" height="20" fill="#2563eb"/>
+                      <rect x="34" y="18" width="22" height="20" fill="#334155"/>
+                      <rect x="60" y="18" width="14" height="20" fill="#334155"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_chrome_sharp">Sharp</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-chrome="hairline">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect width="80" height="56" fill="#0b1220"/>
+                      <rect x="8.5"  y="18.5" width="21" height="19" rx="3" fill="none" stroke="#2563eb" stroke-width="1.2"/>
+                      <rect x="34.5" y="18.5" width="21" height="19" rx="3" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+                      <rect x="60.5" y="18.5" width="13" height="19" rx="3" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_chrome_hairline">Hairline</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="tweaks-section">
+                <div class="tweaks-section-label" data-i18n="tweaks_palette">Suitability palette</div>
+                <div class="tweaks-tile-grid"
+                     id="tweakPalette"
+                     role="radiogroup"
+                     aria-label="Suitability palette">
+                  <button type="button" role="radio" aria-checked="true"
+                          class="tweaks-tile is-active" data-palette="verdant">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect x="0"  y="14" width="20" height="28" fill="#f1e5cd"/>
+                      <rect x="20" y="14" width="20" height="28" fill="#fde047"/>
+                      <rect x="40" y="14" width="20" height="28" fill="#22c55e"/>
+                      <rect x="60" y="14" width="20" height="28" fill="#166534"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_palette_verdant">Verdant</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-palette="heatmap">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect x="0"  y="14" width="20" height="28" fill="#1e3a8a"/>
+                      <rect x="20" y="14" width="20" height="28" fill="#facc15"/>
+                      <rect x="40" y="14" width="20" height="28" fill="#f97316"/>
+                      <rect x="60" y="14" width="20" height="28" fill="#b91c1c"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_palette_heatmap">Heatmap</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked="false"
+                          class="tweaks-tile" data-palette="earthen">
+                    <svg class="tweaks-tile-preview" viewBox="0 0 80 56" aria-hidden="true">
+                      <rect x="0"  y="14" width="20" height="28" fill="#c4b59c"/>
+                      <rect x="20" y="14" width="20" height="28" fill="#d97706"/>
+                      <rect x="40" y="14" width="20" height="28" fill="#0f766e"/>
+                      <rect x="60" y="14" width="20" height="28" fill="#134e4a"/>
+                    </svg>
+                    <span class="tweaks-tile-lbl" data-i18n="tweaks_palette_earthen">Earthen</span>
+                  </button>
+                </div>
+                <p class="tweaks-section-help" data-i18n="tweaks_palette_help">
+                  Affects the legend and analysis chart. Map raster colours come from the server.
+                </p>
+              </section>
+
+              <section class="tweaks-section">
+                <div class="tweaks-section-label"
+                     data-i18n="tweaks_basemap">
+                  Basemap
+                </div>
+                <div class="tweaks-tile-grid"
+                     id="tweakBasemap"
+                     role="radiogroup"
+                     aria-label="Basemap">
+                  <button type="button"
+                          role="radio"
+                          aria-checked="true"
+                          class="tweaks-tile is-active"
+                          data-basemap="osm">
+                    <span class="tweaks-tile-thumb thumb-osm" aria-hidden="true"></span>
+                    <span class="tweaks-tile-lbl" data-i18n="basemap_streets">Streets</span>
+                  </button>
+                  <button type="button"
+                          role="radio"
+                          aria-checked="false"
+                          class="tweaks-tile"
+                          data-basemap="terrain">
+                    <span class="tweaks-tile-thumb thumb-terrain" aria-hidden="true"></span>
+                    <span class="tweaks-tile-lbl" data-i18n="basemap_terrain">Terrain</span>
+                  </button>
+                  <button type="button"
+                          role="radio"
+                          aria-checked="false"
+                          class="tweaks-tile"
+                          data-basemap="satellite">
+                    <span class="tweaks-tile-thumb thumb-sat" aria-hidden="true"></span>
+                    <span class="tweaks-tile-lbl" data-i18n="basemap_satellite">Satellite</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="tweaks-section">
+                <div class="tweaks-section-label"
+                     data-i18n="tweaks_layer_opacity">
+                  Layer opacity
+                </div>
+                <div class="tweaks-slider-row">
+                  <input type="range"
+                         id="tweakLayerOpacity"
+                         class="tweaks-slider"
+                         min="10"
+                         max="100"
+                         step="1"
+                         value="100"
+                         aria-label="Layer opacity"/>
+                  <output id="tweakLayerOpacityValue"
+                          class="tweaks-slider-value"
+                          for="tweakLayerOpacity">100%</output>
+                </div>
+                <p class="tweaks-section-help"
+                   id="tweakLayerOpacityHelp"
+                   data-i18n="tweaks_layer_opacity_help">
+                  Adjusts the active suitability layer.
+                </p>
+              </section>
+            </div>
+          </aside>
+
           <!-- Movable + resizable attribute panel (hidden by default) -->
           <div id="attributePanel" class="attribute-panel d-none">
             <div id="attributePanelHeader"
@@ -403,7 +774,7 @@
               </button>
             </div>
             <div id="attributeTables" class="attribute-panel-body">
-              <!-- tables inserted here by map.js -->
+              <!-- tables inserted dynamically by boundary-manager.js / analysis-manager.js -->
             </div>
           </div>
         </main>
@@ -482,14 +853,21 @@
     </div>
 
     <!-- JS libs -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
-    <script src="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+            crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"
+            integrity="sha384-uofOi1moPDuBpTo0FkNAG4WsnGegNBw9g6c0yU85W9DOyVkz3Ht2vKC744Y92hu0"
+            crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.js"
+            integrity="sha384-AFFQfRPVuaLTIexWvCSNeQOjF9YkUhymk4kGpLSX2SGULXaR7rN/8NXuDAwHd26R"
+            crossorigin="anonymous"></script>
     <script>window.mapboxgl = window.mapboxgl || window.maplibregl;</script>
-    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"
+            integrity="sha384-82q0nm29xZzIo5BMtDYnh2/NxeO6FoaK1S/0nF84w3cEsqbBfun3JdMyDVYWfVY5"
+            crossorigin="anonymous"></script>
 
-    <!-- Chart.js + wrapper -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <!-- Lightweight bar-row chart (replaces Chart.js) -->
     <script src="{% static 'mapviewer/chart.js' %}"></script>
 
     <!-- App config + main JS -->
