@@ -133,16 +133,21 @@ def _init_ee() -> bool:
         return False
 
     key_path: Optional[Path] = None
+    key_data: Optional[str] = None  # raw JSON string (e.g. Railway env var)
 
-    # 1) Env var
-    env_path = os.environ.get("GEE_SERVICE_ACCOUNT_JSON")
-    if env_path:
-        p = Path(env_path)
-        if p.exists():
-            key_path = p
+    # 1) Env var — accepts either a file path OR the raw JSON content
+    env_value = os.environ.get("GEE_SERVICE_ACCOUNT_JSON")
+    if env_value:
+        stripped = env_value.strip()
+        if stripped.startswith("{"):
+            key_data = stripped
+        else:
+            p = Path(env_value)
+            if p.exists():
+                key_path = p
 
     # 2) settings
-    if key_path is None:
+    if key_path is None and key_data is None:
         cfg_path = getattr(settings, "GEE_SERVICE_ACCOUNT_JSON", None)
         if cfg_path:
             p = Path(cfg_path)
@@ -166,7 +171,14 @@ def _init_ee() -> bool:
     try:
         import ee  # type: ignore
 
-        if key_path and key_path.exists():
+        if key_data:
+            data = json.loads(key_data)
+            service_account = data.get("client_email")
+            if not service_account:
+                raise RuntimeError("client_email missing in service account JSON")
+            creds = ee.ServiceAccountCredentials(service_account, key_data=key_data)
+            ee.Initialize(creds)
+        elif key_path and key_path.exists():
             with key_path.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
             service_account = data.get("client_email")
