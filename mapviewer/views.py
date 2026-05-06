@@ -18,43 +18,96 @@ from django.views.decorators.http import require_GET
 # ----------------------------------------------------------------------
 # Sidebar layers shown in the template
 # ----------------------------------------------------------------------
+# `label` is the English fallback rendered server-side; `label_key` is looked up
+# client-side in IV_TRANSLATIONS (mapviewer/static/mapviewer/ui.js) for live i18n.
+# `country` is the dropdown value the layer belongs to — used to filter the
+# sidebar tree when the user changes country.
 LAYERS: List[Dict[str, str]] = [
-    # Irrigation suitability (assets)
+    # Irrigation suitability (assets) — Zimbabwe
     {
         "id": "ASSET_MANICALAND",
         "label": "Manicaland (asset)",
+        "label_key": "layer_asset_manicaland",
         "dataset": "projects/tethys-app-1/assets/Manicaland",
+        "country": "Zimbabwe",
     },
     {
         "id": "ASSET_MAT_NORTH",
         "label": "Matabeleland North (asset)",
+        "label_key": "layer_asset_mat_north",
         "dataset": "projects/tethys-app-1/assets/Matebeleland_North",
+        "country": "Zimbabwe",
     },
     {
         "id": "ASSET_MAT_SOUTH",
         "label": "Matabeleland South (asset)",
+        "label_key": "layer_asset_mat_south",
         "dataset": "projects/tethys-app-1/assets/Mat_south",
+        "country": "Zimbabwe",
     },
     {
         "id": "ASSET_MASVINGO",
         "label": "Masvingo (asset)",
+        "label_key": "layer_asset_masvingo",
         "dataset": "projects/tethys-app-1/assets/Masvingo",
+        "country": "Zimbabwe",
     },
-    # Admin boundaries
+    # Admin boundaries — Zimbabwe
     {
         "id": "ZWE_L1",
-        "label": "Zimbabwe - Admin Level 1 (Provinces)",
+        "label": "Zimbabwe — Admin Level 1 (Provinces)",
+        "label_key": "layer_zwe_l1",
         "dataset": "BOUNDARY_ZWE_L1",
+        "country": "Zimbabwe",
     },
     {
         "id": "ZWE_L2",
-        "label": "Zimbabwe - Admin Level 2 (Districts)",
+        "label": "Zimbabwe — Admin Level 2 (Districts)",
+        "label_key": "layer_zwe_l2",
         "dataset": "BOUNDARY_ZWE_L2",
+        "country": "Zimbabwe",
     },
     {
         "id": "ZWE_L3",
-        "label": "Zimbabwe - Admin Level 3 (Wards)",
+        "label": "Zimbabwe — Admin Level 3 (Wards)",
+        "label_key": "layer_zwe_l3",
         "dataset": "BOUNDARY_ZWE_L3",
+        "country": "Zimbabwe",
+    },
+    # Admin boundaries — South Africa (FAO/GAUL/2015 levels 1 & 2)
+    {
+        "id": "ZAF_L1",
+        "label": "South Africa — Admin Level 1 (Provinces)",
+        "label_key": "layer_zaf_l1",
+        "dataset": "BOUNDARY_ZAF_L1",
+        "country": "South Africa",
+    },
+    {
+        "id": "ZAF_L2",
+        "label": "South Africa — Admin Level 2 (Districts)",
+        "label_key": "layer_zaf_l2",
+        "dataset": "BOUNDARY_ZAF_L2",
+        "country": "South Africa",
+    },
+    {
+        "id": "ZAF_HOMELANDS",
+        "label": "South Africa — Homelands (pre-1994)",
+        "label_key": "layer_zaf_homelands",
+        "dataset": "BOUNDARY_ZAF_L4",
+        "country": "South Africa",
+    },
+    # Irrigation maps — backed by an EE ImageCollection. has_date_picker
+    # tells the frontend to render a month + band selector inline with the
+    # checkbox; the dataset value is rebuilt as "IRR_SA_<iso>?<band>" each
+    # time the picker changes.
+    {
+        "id": "ZAF_IRRIGATION_MONTHLY",
+        "label": "South Africa — Irrigation (monthly)",
+        "label_key": "layer_zaf_irrigation_monthly",
+        "dataset": "IRR_SA_2024-09?filtered",
+        "country": "South Africa",
+        "has_date_picker": True,
+        "ic_kind": "irrigation",
     },
 ]
 
@@ -96,12 +149,19 @@ def _init_ee() -> bool:
             if p.exists():
                 key_path = p
 
-    # 3) default filename at BASE_DIR
+    # 3) default filename at BASE_DIR — keep both the current key and any
+    # previously-rotated keys so a stale .json in the working tree never
+    # silently masks the real one. First match wins.
     if key_path is None:
         base = Path(getattr(settings, "BASE_DIR", "."))
-        p = base / "tethys-app-1-acc3960d3dd6.json"
-        if p.exists():
-            key_path = p
+        for candidate in (
+            "tethys-app-1-087d23478872.json",  # active key
+            "tethys-app-1-acc3960d3dd6.json",  # previous (revoked)
+        ):
+            p = base / candidate
+            if p.exists():
+                key_path = p
+                break
 
     try:
         import ee  # type: ignore
@@ -128,29 +188,169 @@ def _init_ee() -> bool:
 # Template view
 # ----------------------------------------------------------------------
 def index(request: HttpRequest) -> HttpResponse:
+    """Landing page — showcases the layer groups available in the map app."""
+    # Build a slim summary of what's in each group, keyed by ic_kind/dataset
+    # convention so each card lists countries + sample layer names.
+    groups = []
+
+    suit = [l for l in LAYERS if l["dataset"].startswith("projects/")
+            and not l["id"].startswith("SOC_")]
+    boundary = [l for l in LAYERS if l["dataset"].startswith("BOUNDARY_")]
+    irrigation = [l for l in LAYERS if l.get("ic_kind") == "irrigation"]
+    # Socio is hardcoded in the template but mirrored here for the card preview
+    socio_samples = [
+        "Masvingo (asset)",
+        "Solar pump providers",
+        "Matabeleland South",
+        "Mashonaland Central",
+    ]
+
+    def _countries(items):
+        return sorted({l.get("country", "Zimbabwe") for l in items})
+
+    groups = [
+        {
+            "id": "suitability",
+            "icon": "bi-droplet-half",
+            "title_key": "lp_card_suit_title",
+            "title": "Irrigation suitability",
+            "desc_key": "lp_card_suit_desc",
+            "desc": "Multi-criteria rasters classifying land into N / S1 / S2 / S3 suitability.",
+            "countries": _countries(suit),
+            "sample": [l["label"] for l in suit][:4],
+            "count": len(suit),
+        },
+        {
+            "id": "boundaries",
+            "icon": "bi-bounding-box",
+            "title_key": "lp_card_admin_title",
+            "title": "Administrative boundaries",
+            "desc_key": "lp_card_admin_desc",
+            "desc": "Country-specific admin units from FAO/GAUL plus custom historical assets.",
+            "countries": _countries(boundary),
+            "sample": [l["label"] for l in boundary][:4],
+            "count": len(boundary),
+        },
+        {
+            "id": "socio",
+            "icon": "bi-people",
+            "title_key": "lp_card_socio_title",
+            "title": "Socio-economic layers",
+            "desc_key": "lp_card_socio_desc",
+            "desc": "Existing irrigation schemes, solar-pump providers, and other field-level reference data.",
+            "countries": ["Zimbabwe"],
+            "sample": socio_samples,
+            "count": len(socio_samples),
+        },
+        {
+            "id": "irrigation",
+            "icon": "bi-calendar3",
+            "title_key": "lp_card_irrigation_title",
+            "title": "Irrigation maps (monthly)",
+            "desc_key": "lp_card_irrigation_desc",
+            "desc": "Sentinel-2 + Dynamic World derived irrigation masks per month, with raw / probability / filtered bands.",
+            "countries": _countries(irrigation),
+            "sample": [l["label"] for l in irrigation][:4],
+            "count": len(irrigation),
+        },
+    ]
+
+    return render(request, "mapviewer/landing.html", {"groups": groups})
+
+
+def map_view(request: HttpRequest) -> HttpResponse:
+    """The map application itself."""
     return render(request, "mapviewer/index.html", {"layers": LAYERS})
 
 
 # ----------------------------------------------------------------------
 # GAUL / boundary helpers
 # ----------------------------------------------------------------------
-# NOTE: level 3 uses your custom wards asset
-_GAUL_PATHS: Dict[int, str] = {
-    1: "FAO/GAUL/2015/level1",
-    2: "FAO/GAUL/2015/level2",
-    3: "projects/tethys-app-1/assets/ZWE_ADM3_wards_2025",
+# Sentinel format: "BOUNDARY_<ISO>_L<level>"  e.g. "BOUNDARY_ZAF_L1".
+# Per-country path maps lets us mix shared FAO/GAUL paths with custom assets
+# (e.g. ZWE level 3 uses a custom wards collection that ZAF doesn't have).
+_GAUL_PATHS_BY_COUNTRY: Dict[str, Dict[int, str]] = {
+    "ZWE": {
+        1: "FAO/GAUL/2015/level1",
+        2: "FAO/GAUL/2015/level2",
+        3: "projects/tethys-app-1/assets/ZWE_ADM3_wards_2025",
+    },
+    "ZAF": {
+        1: "FAO/GAUL/2015/level1",
+        2: "FAO/GAUL/2015/level2",
+        # No level-3 asset for South Africa (yet) — wards equivalent not configured.
+        # Level 4 is a custom asset of the pre-1994 homeland / Bantustan boundaries.
+        4: "projects/tethys-app-1/assets/homeland_boundary",
+    },
 }
+
+_BOUNDARY_COUNTRY_NAME: Dict[str, str] = {
+    "ZWE": "Zimbabwe",
+    "ZAF": "South Africa",
+}
+
+# Suitability raster palettes, keyed by name. The frontend Tweaks panel
+# sends ?palette=<name> on /api/gee/map/ to repaint the EE tile.
+# Order: [N, S1, S2, S3] — class indices 0..3.
+_SUITABILITY_PALETTES: Dict[str, List[str]] = {
+    "verdant": ["#f1e5cd", "#166534", "#22c55e", "#fde047"],
+    "heatmap": ["#1e3a8a", "#b91c1c", "#f97316", "#facc15"],
+    "earthen": ["#c4b59c", "#134e4a", "#0f766e", "#d97706"],
+}
+
+# South Africa monthly irrigation ImageCollection. Built by
+# notebooks/monthly_irrigation_ic.ipynb. Three bands: raw, probability, filtered.
+_SA_IRRIGATION_IC = "projects/tethys-app-1/assets/sa_irrigation_monthly"
+_SA_IRRIGATION_BANDS = {"raw", "probability", "filtered"}
+
+
+def _parse_irrigation_dataset(dataset: str):
+    """Parse 'IRR_SA_2024-06?filtered' -> ('2024-06', 'filtered'). Returns
+    None for non-irrigation inputs."""
+    if not dataset or not dataset.startswith("IRR_SA_"):
+        return None
+    rest = dataset[len("IRR_SA_"):]
+    iso, _, band = rest.partition("?")
+    band = band or "filtered"
+    if band not in _SA_IRRIGATION_BANDS:
+        return None
+    if not iso:
+        return None
+    return iso, band
+
+
+def _parse_boundary_dataset(dataset: str):
+    """Parse 'BOUNDARY_ZAF_L1' -> ('ZAF', 1) or None for non-boundary inputs."""
+    if not dataset or not dataset.startswith("BOUNDARY_"):
+        return None
+    rest = dataset[len("BOUNDARY_"):]  # e.g. "ZAF_L1"
+    if "_L" not in rest:
+        return None
+    iso, _, lvl = rest.partition("_L")
+    try:
+        return iso, int(lvl)
+    except ValueError:
+        return None
+
+
+# Back-compat alias kept in case any caller still imports it.
+_GAUL_PATHS: Dict[int, str] = _GAUL_PATHS_BY_COUNTRY["ZWE"]
 
 # If your ward asset uses different field names, update the level-3 entries.
 _GAUL_NAME: Dict[int, str] = {
     1: "ADM1_NAME",
     2: "ADM2_NAME",
     3: "ADM3_NAME",
+    # Custom homeland_boundary asset (ZAF level 4) — its name field is "NAME"
+    4: "NAME",
 }
 _GAUL_CODE: Dict[int, str] = {
     1: "ADM1_CODE",
     2: "ADM2_CODE",
     3: "ADM3_CODE",
+    # homeland_boundary asset has no separate code field — fall back to NAME
+    # so click-to-analyze still has something stable to key off.
+    4: "NAME",
 }
 
 
@@ -158,6 +358,22 @@ def _ee_geom_from_geojson(geo: Dict[str, Any]):
     import ee  # type: ignore
     # Let Earth Engine handle defaults; no manual geodesic/maxError here
     return ee.Geometry(geo)
+
+
+def _bounds_from_ee_geometry(geometry) -> Optional[Dict[str, float]]:
+    """Return a small south/west/north/east dict for an EE geometry."""
+    try:
+        ring = geometry.bounds().coordinates().getInfo()[0]
+        lons = [pt[0] for pt in ring]
+        lats = [pt[1] for pt in ring]
+        return {
+            "south": min(lats),
+            "west": min(lons),
+            "north": max(lats),
+            "east": max(lons),
+        }
+    except Exception:
+        return None
 
 
 
@@ -185,6 +401,13 @@ def gee_map(request: HttpRequest) -> JsonResponse:
     if not dataset:
         return JsonResponse({"error": "Missing 'dataset' parameter"}, status=400)
 
+    # Suitability palette name (verdant/heatmap/earthen). Falls back to
+    # verdant for unknown values so a stale client never breaks the tile.
+    palette_name = (request.GET.get("palette") or "verdant").lower()
+    palette_colors = _SUITABILITY_PALETTES.get(
+        palette_name, _SUITABILITY_PALETTES["verdant"]
+    )
+
     if not _init_ee():
         return JsonResponse(
             {
@@ -205,25 +428,26 @@ def gee_map(request: HttpRequest) -> JsonResponse:
         # --------------------------------------------------------------
         # 1) GAUL boundaries via FAO/GAUL (styled black line)
         # --------------------------------------------------------------
-        if dataset.startswith("BOUNDARY_ZWE_L"):
-            try:
-                level = int(dataset.rsplit("_L", 1)[1])
-            except Exception:
+        parsed = _parse_boundary_dataset(dataset)
+        if parsed:
+            iso, level = parsed
+            country_name = _BOUNDARY_COUNTRY_NAME.get(iso)
+            if not country_name:
                 return JsonResponse(
                     {
                         "configured": True,
-                        "message": "Invalid boundary level",
+                        "message": f"Unsupported boundary country code: {iso}",
                         "tile_url": None,
                     },
                     status=400,
                 )
 
-            path = _GAUL_PATHS.get(level)
+            path = _GAUL_PATHS_BY_COUNTRY.get(iso, {}).get(level)
             if not path:
                 return JsonResponse(
                     {
                         "configured": True,
-                        "message": f"Unsupported level {level}",
+                        "message": f"Unsupported level {level} for {country_name}",
                         "tile_url": None,
                     },
                     status=400,
@@ -231,13 +455,13 @@ def gee_map(request: HttpRequest) -> JsonResponse:
 
             try:
                 fc = ee.FeatureCollection(path).filter(
-                    ee.Filter.eq("ADM0_NAME", "Zimbabwe")
+                    ee.Filter.eq("ADM0_NAME", country_name)
                 )
             except Exception as e:
                 return JsonResponse(
                     {
                         "configured": False,
-                        "message": f"Failed to load GAUL L{level}: {e}",
+                        "message": f"Failed to load GAUL L{level} for {country_name}: {e}",
                         "tile_url": None,
                     },
                     status=200,
@@ -252,21 +476,46 @@ def gee_map(request: HttpRequest) -> JsonResponse:
             vis = {}
 
             # Country bounds for nice zoom
+            country = ee.FeatureCollection("FAO/GAUL/2015/level0").filter(
+                ee.Filter.eq("ADM0_NAME", country_name)
+            )
+            bounds = _bounds_from_ee_geometry(country.geometry())
+
+        # --------------------------------------------------------------
+        # 2b) South Africa monthly irrigation ImageCollection
+        # --------------------------------------------------------------
+        elif _parse_irrigation_dataset(dataset):
+            iso, band = _parse_irrigation_dataset(dataset)
             try:
-                country = ee.FeatureCollection("FAO/GAUL/2015/level0").filter(
-                    ee.Filter.eq("ADM0_NAME", "Zimbabwe")
+                ic = ee.ImageCollection(_SA_IRRIGATION_IC)
+                img = ic.filter(ee.Filter.eq("iso_period", iso)).first()
+                # Will raise if no match
+                _ = img.bandNames().getInfo()
+                image = ee.Image(img).select(band)
+            except Exception as e:
+                return JsonResponse(
+                    {
+                        "dataset": dataset,
+                        "configured": False,
+                        "message": f"Irrigation period not available: {iso} ({e})",
+                        "tile_url": None,
+                    },
+                    status=200,
                 )
-                ring = country.geometry().bounds().coordinates().getInfo()[0]
-                lons = [pt[0] for pt in ring]
-                lats = [pt[1] for pt in ring]
-                bounds = {
-                    "south": min(lats),
-                    "west": min(lons),
-                    "north": max(lats),
-                    "east": max(lons),
-                }
-            except Exception:
-                bounds = None
+
+            if band == "probability":
+                vis = {"min": 0, "max": 1,
+                       "palette": ["#ffffff", "#00ffff", "#0000fa"]}
+            else:
+                # raw / filtered are 0/1 binary masks; show only 1.
+                image = image.selfMask()
+                vis = {"min": 1, "max": 1, "palette": ["#1a9641"]}
+
+            # Reuse SA bounds for nice zoom
+            country = ee.FeatureCollection("FAO/GAUL/2015/level0").filter(
+                ee.Filter.eq("ADM0_NAME", "South Africa")
+            )
+            bounds = _bounds_from_ee_geometry(country.geometry())
 
         # --------------------------------------------------------------
         # 2) Socio-economic layers – known FeatureCollections
@@ -296,18 +545,7 @@ def gee_map(request: HttpRequest) -> JsonResponse:
             vis = {}
 
             # Try to compute bounds of the layer
-            try:
-                ring = fc.geometry().bounds().coordinates().getInfo()[0]
-                lons = [pt[0] for pt in ring]
-                lats = [pt[1] for pt in ring]
-                bounds = {
-                    "south": min(lats),
-                    "west": min(lons),
-                    "north": max(lats),
-                    "east": max(lons),
-                }
-            except Exception:
-                bounds = None
+            bounds = _bounds_from_ee_geometry(fc.geometry())
 
         # --------------------------------------------------------------
         # 3) Default: try as Image, fallback to generic FC style
@@ -318,12 +556,14 @@ def gee_map(request: HttpRequest) -> JsonResponse:
                 img = ee.Image(dataset)
                 _ = img.bandNames()  # forces Image.load / will throw if not image
                 image = img
-                # Default suitability palette; harmless for other rasters too
+                # Suitability palette (verdant / heatmap / earthen) selected
+                # by the Tweaks panel; harmless for other rasters too.
                 vis = {
                     "min": 0,
                     "max": 3,
-                    "palette": ["#f1e5cd", "#166534", "#22c55e", "#fde047"],
+                    "palette": palette_colors,
                 }
+                bounds = _bounds_from_ee_geometry(img.geometry())
             except Exception:
                 # Not an image → try FeatureCollection and style it
                 try:
@@ -335,6 +575,7 @@ def gee_map(request: HttpRequest) -> JsonResponse:
                         fillColor="00000000",
                     )
                     vis = {}
+                    bounds = _bounds_from_ee_geometry(fc.geometry())
                 except Exception as e:
                     return JsonResponse(
                         {
@@ -345,9 +586,6 @@ def gee_map(request: HttpRequest) -> JsonResponse:
                         },
                         status=200,
                     )
-
-            bounds = None  # let client keep current view unless we compute bounds above
-
         # --------------------------------------------------------------
         # Build tile URL
         # --------------------------------------------------------------
@@ -422,23 +660,28 @@ def gee_boundaries(request: HttpRequest) -> JsonResponse:
             }
         )
 
+    iso = (request.GET.get("country_iso") or "ZWE").upper()
+    country_name = _BOUNDARY_COUNTRY_NAME.get(iso)
+
     try:
         import ee  # type: ignore
 
-        path = _GAUL_PATHS.get(level)
-        if not path:
+        path = _GAUL_PATHS_BY_COUNTRY.get(iso, {}).get(level)
+        if not path or not country_name:
             return JsonResponse(
                 {
                     "configured": True,
                     "level": level,
                     "features": [],
-                    "message": "Unsupported level",
+                    "message": f"Unsupported level {level} for {iso}",
                 }
             )
 
         fc = ee.FeatureCollection(path)
-        if level in (1, 2):
-            fc = fc.filter(ee.Filter.eq("ADM0_NAME", "Zimbabwe"))
+        # GAUL levels are global, so always filter by country.
+        # Custom assets (level 3 ZWE wards) are already country-specific.
+        if path.startswith("FAO/GAUL/"):
+            fc = fc.filter(ee.Filter.eq("ADM0_NAME", country_name))
 
         name_field = _GAUL_NAME.get(level, "ADM1_NAME")
         code_field = _GAUL_CODE.get(level, "ADM1_CODE")
@@ -579,21 +822,23 @@ def gee_boundary_geom(request: HttpRequest) -> JsonResponse:
 
     import ee  # type: ignore
 
-    path = _GAUL_PATHS.get(level)
-    if not path:
+    iso = str(body.get("country_iso") or "ZWE").upper()
+    country_name = _BOUNDARY_COUNTRY_NAME.get(iso)
+    path = _GAUL_PATHS_BY_COUNTRY.get(iso, {}).get(level)
+    if not path or not country_name:
         return JsonResponse(
             {
                 "configured": True,
                 "feature": None,
-                "message": f"Unsupported level {level}",
+                "message": f"Unsupported level {level} for {iso}",
             },
             status=200,
         )
 
     try:
-        fc = ee.FeatureCollection(path).filter(
-            ee.Filter.eq("ADM0_NAME", "Zimbabwe")
-        )
+        fc = ee.FeatureCollection(path)
+        if path.startswith("FAO/GAUL/"):
+            fc = fc.filter(ee.Filter.eq("ADM0_NAME", country_name))
         code_field = _GAUL_CODE.get(level)
         name_field = _GAUL_NAME.get(level)
 
@@ -770,12 +1015,19 @@ def gee_analyze_admin(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"items": [], "message": "EE not initialized"}, status=200)
 
     import ee  # type: ignore
-    path = _GAUL_PATHS.get(level)
-    if not path:
-        return JsonResponse({"items": [], "message": f"Unsupported level {level}"}, status=200)
+    iso = str(body.get("country_iso") or "ZWE").upper()
+    country_name = _BOUNDARY_COUNTRY_NAME.get(iso)
+    path = _GAUL_PATHS_BY_COUNTRY.get(iso, {}).get(level)
+    if not path or not country_name:
+        return JsonResponse(
+            {"items": [], "message": f"Unsupported level {level} for {iso}"},
+            status=200,
+        )
 
     try:
-        fc = ee.FeatureCollection(path).filter(ee.Filter.eq("ADM0_NAME", "Zimbabwe"))
+        fc = ee.FeatureCollection(path)
+        if path.startswith("FAO/GAUL/"):
+            fc = fc.filter(ee.Filter.eq("ADM0_NAME", country_name))
         code_field = _GAUL_CODE.get(level)
         name_field = _GAUL_NAME.get(level)
 
@@ -846,12 +1098,14 @@ def gee_boundaries_geojson(request: HttpRequest) -> JsonResponse:
 
     import ee  # type: ignore
 
-    path = _GAUL_PATHS.get(level)
-    if not path:
+    iso = (request.GET.get("country_iso") or "ZWE").upper()
+    country_name = _BOUNDARY_COUNTRY_NAME.get(iso)
+    path = _GAUL_PATHS_BY_COUNTRY.get(iso, {}).get(level)
+    if not path or not country_name:
         return JsonResponse(
             {
                 "configured": True,
-                "message": f"Unsupported level {level}",
+                "message": f"Unsupported level {level} for {iso}",
                 "type": "FeatureCollection",
                 "features": [],
             },
@@ -863,8 +1117,8 @@ def gee_boundaries_geojson(request: HttpRequest) -> JsonResponse:
         code_field = _GAUL_CODE.get(level)
 
         fc = ee.FeatureCollection(path)
-        if level in (1, 2):
-            fc = fc.filter(ee.Filter.eq("ADM0_NAME", "Zimbabwe"))
+        if path.startswith("FAO/GAUL/"):
+            fc = fc.filter(ee.Filter.eq("ADM0_NAME", country_name))
 
         # Simplify geometry to reduce size
         fc = fc.map(
@@ -932,13 +1186,15 @@ def gee_boundary_at_point(request: HttpRequest) -> JsonResponse:
 
     import ee  # type: ignore
 
-    path = _GAUL_PATHS.get(level)
-    if not path:
+    iso = str(body.get("country_iso") or "ZWE").upper()
+    country_name = _BOUNDARY_COUNTRY_NAME.get(iso)
+    path = _GAUL_PATHS_BY_COUNTRY.get(iso, {}).get(level)
+    if not path or not country_name:
         return JsonResponse(
             {
                 "configured": True,
                 "feature": None,
-                "message": f"Unsupported level {level}",
+                "message": f"Unsupported level {level} for {iso}",
             },
             status=200,
         )
@@ -950,8 +1206,8 @@ def gee_boundary_at_point(request: HttpRequest) -> JsonResponse:
         point = ee.Geometry.Point([float(lon), float(lat)])
 
         fc = ee.FeatureCollection(path)
-        if level in (1, 2):
-            fc = fc.filter(ee.Filter.eq("ADM0_NAME", "Zimbabwe"))
+        if path.startswith("FAO/GAUL/"):
+            fc = fc.filter(ee.Filter.eq("ADM0_NAME", country_name))
         fc = fc.filterBounds(point)
 
         feat = ee.Feature(fc.first())
@@ -1069,3 +1325,39 @@ def gee_socio_geojson(request: HttpRequest) -> JsonResponse:
     gj["configured"] = True
     gj.setdefault("type", "FeatureCollection")
     return JsonResponse(gj, safe=False)
+
+
+# ----------------------------------------------------------------------
+# /api/gee/irrigation-periods/  -> list of available months in the SA
+# irrigation ImageCollection (used by the date picker).
+# Returns: {configured: bool, periods: [{iso_period, month_label, year, month}]}
+# ----------------------------------------------------------------------
+@require_GET
+def gee_irrigation_periods(request: HttpRequest) -> JsonResponse:
+    if not _init_ee():
+        return JsonResponse(
+            {
+                "configured": False,
+                "periods": [],
+                "message": _EE_INIT_ERROR or "Earth Engine not initialized",
+            }
+        )
+    try:
+        import ee  # type: ignore
+        ic = ee.ImageCollection(_SA_IRRIGATION_IC).sort("system:time_start")
+        periods = (
+            ic.toList(ic.size())
+              .map(lambda im: ee.Image(im).toDictionary(
+                  ["iso_period", "month_label", "year", "month"]
+              ))
+              .getInfo()
+        )
+        return JsonResponse({"configured": True, "periods": periods})
+    except Exception as e:
+        return JsonResponse(
+            {
+                "configured": False,
+                "periods": [],
+                "message": f"Failed to read irrigation IC: {e}",
+            }
+        )
