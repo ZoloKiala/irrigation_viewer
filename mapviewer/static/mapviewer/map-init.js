@@ -348,6 +348,15 @@
   document.addEventListener("DOMContentLoaded", () => {
     if (!API.mapEl) return;
 
+    if (API.updateLayerTreeForCountry) {
+      API.updateLayerTreeForCountry();
+    }
+    if (API.countrySelect && API.updateLayerTreeForCountry) {
+      API.countrySelect.addEventListener("change", () => {
+        API.updateLayerTreeForCountry();
+      });
+    }
+
     initMap();
     API.wireLayerTreeGroups();
     API.wireLayerGroupDragAndDrop();
