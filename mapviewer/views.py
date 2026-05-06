@@ -752,6 +752,29 @@ def gee_health(request: HttpRequest) -> JsonResponse:
     info: Dict[str, Any] = {"initialized": ok}
     if not ok:
         info["error"] = _EE_INIT_ERROR
+        env_value = os.environ.get("GEE_SERVICE_ACCOUNT_JSON")
+        if env_value is None:
+            info["env_diag"] = "GEE_SERVICE_ACCOUNT_JSON not set"
+        else:
+            stripped = env_value.strip()
+            head = stripped[:5]
+            tail = stripped[-5:] if len(stripped) > 5 else ""
+            info["env_diag"] = {
+                "len": len(env_value),
+                "starts_with_brace": stripped.startswith("{"),
+                "head": head,
+                "tail": tail,
+                "json_parses": False,
+                "has_client_email": False,
+                "has_private_key": False,
+            }
+            try:
+                parsed = json.loads(stripped)
+                info["env_diag"]["json_parses"] = True
+                info["env_diag"]["has_client_email"] = bool(parsed.get("client_email"))
+                info["env_diag"]["has_private_key"] = bool(parsed.get("private_key"))
+            except Exception as e:
+                info["env_diag"]["json_error"] = str(e)
         return JsonResponse(info, status=200)
 
     try:
