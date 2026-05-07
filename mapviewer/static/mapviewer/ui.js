@@ -88,7 +88,7 @@ const IV_TRANSLATIONS = {
     layer_info_title: "Layer info",
     about_title: "About Irrigation Viewer",
     about_body:
-      "The Irrigation Viewer helps explore irrigation suitability, existing schemes and socio-economic layers in the Limpopo River Basin. Use the left panel to toggle suitability maps and boundaries, then draw polygons or click admin units to run area-based analysis. Results can support planning, targeting investments and monitoring change over time.",
+      "The Irrigation Viewer helps explore irrigation suitability, existing schemes and socio-economic layers in the Country River Basin. Use the left panel to toggle suitability maps and boundaries, then draw polygons or click admin units to run area-based analysis. Results can support planning, targeting investments and monitoring change over time.",
     help_title: "How to use this app",
     help_body:
       "1) Select Zimbabwe in the Country dropdown. 2) Choose a suitability map in the left panel. 3) Draw a polygon or click an admin boundary on the map. 4) In the popup, click Run analysis to compute areas by class. 5) Use the Attributes button to inspect feature tables. South Africa and Angola are currently configured for navigation only; layers will be added later.",
@@ -211,7 +211,7 @@ const IV_TRANSLATIONS = {
     layer_info_title: "Informação da camada",
     about_title: "Sobre o Irrigation Viewer",
     about_body:
-      "O Irrigation Viewer ajuda a explorar a aptidão para irrigação, os esquemas existentes e as camadas socioeconómicas na Bacia do Limpopo. Utilize o painel à esquerda para ativar mapas de aptidão e limites e, em seguida, desenhe polígonos ou clique nas unidades administrativas para executar análises de área. Os resultados podem apoiar o planeamento, o direcionamento de investimentos e o acompanhamento das mudanças ao longo do tempo.",
+      "O Irrigation Viewer ajuda a explorar a aptidão para irrigação, os esquemas existentes e as camadas socioeconómicas na Bacia do País. Utilize o painel à esquerda para ativar mapas de aptidão e limites e, em seguida, desenhe polígonos ou clique nas unidades administrativas para executar análises de área. Os resultados podem apoiar o planeamento, o direcionamento de investimentos e o acompanhamento das mudanças ao longo do tempo.",
     help_title: "Como utilizar esta aplicação",
     help_body:
       "1) Selecione o Zimbabué na lista País. 2) Escolha um mapa de aptidão no painel à esquerda. 3) Desenhe um polígono ou clique num limite administrativo no mapa. 4) Na janela, clique em Executar análise para calcular as áreas por classe. 5) Use o botão Atributos para inspecionar as tabelas de atributos. África do Sul e Angola estão, por enquanto, apenas configuradas para navegação; as camadas serão adicionadas mais tarde.",
