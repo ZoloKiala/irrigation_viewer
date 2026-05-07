@@ -205,6 +205,12 @@ html { overflow-x: clip; }
   height: 100%;
   object-fit: cover;
 }
+/* Per-slide override: keep the whole shape visible (letterbox) instead of
+   filling the card. Use on slides whose content has irregular bbox edges
+   that would crop awkwardly under cover. */
+.lp-compare-img--contain {
+  object-fit: contain;
+}
 /* Indicators — pin them above the caption so they don't overlap */
 .lp-carousel .carousel-indicators {
   margin-bottom: 0.6rem;
