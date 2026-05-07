@@ -203,11 +203,6 @@ html { overflow-x: clip; }
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-}
-/* Full-bleed slide modifier — for slides whose image is a complete rectangle
-   (e.g. satellite imagery) and should fill the card edge-to-edge. */
-.lp-compare-img--cover {
   object-fit: cover;
 }
 /* Indicators — pin them above the caption so they don't overlap */
