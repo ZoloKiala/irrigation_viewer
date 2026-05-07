@@ -90,7 +90,7 @@
       <div class="container-fluid navbar-iv-inner">
         <!-- Left cluster: brand + status -->
         <div class="navbar-iv-left">
-          <a class="navbar-brand-iv" href="#" aria-label="Irrigation Viewer home">
+          <a class="navbar-brand-iv" href="{% url 'mapviewer:index' %}" aria-label="Irrigation Viewer — landing page">
             <img src="{% static 'mapviewer/logo.svg' %}"
                  alt="Irrigation Viewer"
                  class="navbar-brand-icon"/>
@@ -105,31 +105,8 @@
           </span>
         </div>
 
-        <!-- Centre cluster: navigation pills -->
-        <div class="navbar-iv-centre">
-          <div class="nav-pill-bar">
-            <button id="navHomeBtn" type="button" class="nav-pill-item active">
-              <i class="bi bi-house-door-fill nav-pill-icon" aria-hidden="true"></i>
-              <span class="nav-pill-label" data-i18n="nav_home">Home</span>
-            </button>
-            <button id="navAboutBtn"
-                    type="button"
-                    class="nav-pill-item"
-                    data-bs-toggle="modal"
-                    data-bs-target="#aboutModal">
-              <i class="bi bi-info-circle nav-pill-icon" aria-hidden="true"></i>
-              <span class="nav-pill-label" data-i18n="nav_about">About</span>
-            </button>
-            <button id="navHelpBtn"
-                    type="button"
-                    class="nav-pill-item"
-                    data-bs-toggle="modal"
-                    data-bs-target="#helpModal">
-              <i class="bi bi-question-circle nav-pill-icon" aria-hidden="true"></i>
-              <span class="nav-pill-label" data-i18n="nav_help">Help</span>
-            </button>
-          </div>
-        </div>
+        <!-- Centre cluster: navigation pills (hidden for now) -->
+        <div class="navbar-iv-centre"></div>
 
         <!-- Right cluster: partner + language -->
         <div class="navbar-iv-right">
