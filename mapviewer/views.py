@@ -655,6 +655,12 @@ def gee_thumbnail(request: HttpRequest):
         palette_name, _SUITABILITY_PALETTES["verdant"]
     )
 
+    # Static fallback served when EE/getThumbURL fails — guarantees the
+    # carousel never shows a broken image even if the EE round-trip fails
+    # (auth, asset unavailable, network blip, cold start, ...).
+    from django.templatetags.static import static
+    fallback_url = static("mapviewer/irrigation_hero.jpg")
+
     cache_key = "iv:thumb:" + hashlib.sha1(
         f"{dataset}|{palette_name}|{dim}".encode("utf-8")
     ).hexdigest()
@@ -663,10 +669,14 @@ def gee_thumbnail(request: HttpRequest):
         return HttpResponseRedirect(cached_url)
 
     if not _init_ee():
-        return JsonResponse(
-            {"error": _EE_INIT_ERROR or "Earth Engine not initialized"},
-            status=503,
-        )
+        # Don't return JSON here — the browser is loading this URL as <img>,
+        # so JSON renders as a broken-image icon. Redirect to a placeholder
+        # and surface the real error in the response headers for debugging.
+        resp = HttpResponseRedirect(fallback_url)
+        resp["X-Thumb-Fallback-Reason"] = (
+            _EE_INIT_ERROR or "Earth Engine not initialized"
+        )[:250]
+        return resp
 
     try:
         import ee  # type: ignore
@@ -702,21 +712,21 @@ def gee_thumbnail(request: HttpRequest):
                     {"min": 0, "max": 3, "palette": palette_colors}
                 )
                 thumb_params["region"] = img.geometry().bounds()
-            except Exception:
-                return JsonResponse(
-                    {"error": f"Unsupported dataset for thumbnail: {dataset}"},
-                    status=400,
-                )
+            except Exception as e:
+                resp = HttpResponseRedirect(fallback_url)
+                resp["X-Thumb-Fallback-Reason"] = (
+                    f"Unsupported dataset: {dataset} ({e})"
+                )[:250]
+                return resp
 
         url = image.getThumbURL(thumb_params)
         cache.set(cache_key, url, timeout=6 * 60 * 60)
         return HttpResponseRedirect(url)
 
     except Exception as e:
-        return JsonResponse(
-            {"error": f"Thumbnail generation failed: {e}"},
-            status=500,
-        )
+        resp = HttpResponseRedirect(fallback_url)
+        resp["X-Thumb-Fallback-Reason"] = f"getThumbURL failed: {e}"[:250]
+        return resp
 
 
 # ----------------------------------------------------------------------
