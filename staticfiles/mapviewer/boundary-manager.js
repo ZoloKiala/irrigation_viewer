@@ -5,6 +5,10 @@
 
   const API = window.MAPVIEWER || (window.MAPVIEWER = {});
 
+  // Translation helper — falls back to the English string if ivT() isn't loaded yet.
+  const _t = (key, fallback) =>
+    typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
+
   class BoundaryManager {
     constructor(options) {
       this.map = options.map;
@@ -25,6 +29,64 @@
         options.getLastSocioClickTime || API.getLastSocioClickTime;
 
       this.boundaryLayerData = {}; // by layerId
+
+      // Track the currently-open boundary popup so we can re-render its
+      // text when the user switches languages.
+      this._activePopup = null;
+      this._activePopupCtx = null;
+
+      document.addEventListener("iv:languagechange", () => {
+        if (!this._activePopup || !this._activePopupCtx) return;
+        const { feature, name } = this._activePopupCtx;
+        this._activePopup.setHTML(this._buildBoundaryPopupHtml(name));
+        // setHTML replaces the inner DOM, so click handlers must be re-bound.
+        this._attachBoundaryPopupHandlers(this._activePopup, feature, name);
+      });
+    }
+
+    _buildBoundaryPopupHtml(name) {
+      const _t = (k, fb) =>
+        (typeof window.ivT === "function" ? window.ivT(k, fb) : fb);
+      return `
+        <div class="small popup-body">
+          <div class="fw-semibold mb-1">${name}</div>
+          <div class="mb-2">
+            Use the attribute panel to explore full attributes.
+          </div>
+          <div class="mt-1">
+            <label class="form-label form-label-sm mb-1">Analysis type</label>
+            <div class="d-flex align-items-center gap-2">
+              <select id="boundaryAnalysisTypeSelect"
+                      class="form-select form-select-sm">
+                <option value="soil" selected>${_t("popup_analysis_type_soil", "Irrigation suitability (area)")}</option>
+                <option value="socio">${_t("popup_analysis_type_socio", "Irrigation Investment suitability")}</option>
+              </select>
+              <button id="boundaryAnalyzeBtn" type="button"
+                      class="btn btn-primary btn-sm">
+                ${_t("popup_run_analysis", "Run analysis")}
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    _attachBoundaryPopupHandlers(popup, feature, name) {
+      setTimeout(() => {
+        const btn = document.getElementById("boundaryAnalyzeBtn");
+        const select = document.getElementById("boundaryAnalysisTypeSelect");
+        if (!btn) return;
+
+        btn.addEventListener("click", () => {
+          if (!this.analysisManager.currentSuitability) {
+            this.setStatus(_t("status_select_suit", "Select a suitability map first."), true);
+            return;
+          }
+          const mode = select ? (select.value || "soil") : "soil";
+          this.analysisManager.runBoundaryAnalysis(feature, name, mode);
+          popup.remove();
+        });
+      }, 0);
     }
 
     _featureIndex(feature) {
@@ -124,10 +186,18 @@
     async addBoundaryVectorLayer(dataset, id, label) {
       if (!this.map || !dataset || !id) return;
 
+      // Parse the BOUNDARY_<ISO>_L<level> sentinel into its parts.
       let level = 1;
+      let countryIso = "ZWE";
       try {
-        const match = dataset.match(/_L(\d+)/);
-        level = match ? parseInt(match[1], 10) || 1 : 1;
+        const m = dataset.match(/^BOUNDARY_([A-Z]+)_L(\d+)/);
+        if (m) {
+          countryIso = m[1];
+          level = parseInt(m[2], 10) || 1;
+        } else {
+          const lvlOnly = dataset.match(/_L(\d+)/);
+          level = lvlOnly ? parseInt(lvlOnly[1], 10) || 1 : 1;
+        }
       } catch (e) {
         level = 1;
       }
@@ -137,20 +207,29 @@
       const fillId = `${id}_fill`;
       const lineId = `${id}_line`;
 
+      // If already added, just re-render attribute table
       if (this.map.getSource(sourceId) && this.map.getLayer(lineId)) {
         const info = this.boundaryLayerData[id];
         if (info && info.features && info.features.length) {
-          this.renderBoundaryAttributeTableForLayer(id, info.label, info.features, null);
+          this.renderBoundaryAttributeTableForLayer(
+            id,
+            info.label,
+            info.features,
+            null
+          );
         }
         API.updateLayerZOrder();
         return;
       }
 
       try {
-        this.setStatus("Loading boundary polygons…", false);
-        API.showMapSpinner("Loading boundary polygons…");
+        const loadingMsg = _t("status_loading_boundaries", "Loading boundary polygons…");
+        this.setStatus(loadingMsg, false);
+        API.showMapSpinner(loadingMsg);
 
-        const resp = await fetch(`${this.geeBoundariesUrl}?level=${level}`);
+        const resp = await fetch(
+          `${this.geeBoundariesUrl}?level=${level}&country_iso=${encodeURIComponent(countryIso)}`
+        );
 
         if (!resp.ok) {
           const txt = await resp.text();
@@ -245,7 +324,7 @@
       } catch (err) {
         console.error("Failed to add boundary vector layer", err);
         API.hideMapSpinner();
-        this.setStatus("Error loading boundary polygons.", true);
+        this.setStatus(_t("status_boundaries_error", "Error loading boundary polygons."), true);
       }
     }
 
@@ -279,9 +358,9 @@
         this.attributeTablesEl.insertAdjacentHTML(
           "beforeend",
           `<div class="attribute-table-wrapper mb-3" data-layer-id="${layerId}">
-           <div class="attribute-panel-title mb-2">${label} – boundaries</div>
-           <div class="small text-secondary"><em>No features.</em></div>
-         </div>`
+             <div class="attribute-panel-title mb-2">${label} – boundaries</div>
+             <div class="small text-secondary"><em>No features.</em></div>
+           </div>`
         );
         return;
       }
@@ -324,37 +403,39 @@
           return `<tr class="attribute-table-row${selectedClass}"
                     data-layer-id="${layerId}"
                     data-feature-index="${idx}">
-                  ${tds}
-                </tr>`;
+                    ${tds}
+                  </tr>`;
         })
         .join("");
 
       const html = `
-      <div class="attribute-table-wrapper mb-3" data-layer-id="${layerId}">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <div class="attribute-panel-title">${label} – boundaries</div>
-          <div class="d-flex gap-2 align-items-center">
-            <input id="${searchId}"
-                   type="text"
-                   class="form-control form-control-sm attribute-search-input"
-                   placeholder="Search…"
-                   data-target-table="${tableId}">
-            <button type="button"
-                    class="btn btn-outline-light btn-sm py-0 px-2"
-                    data-zoom-layer-id="${layerId}">
-              Zoom all
-            </button>
+        <div class="attribute-table-wrapper mb-3" data-layer-id="${layerId}">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="attribute-panel-title">${label} – boundaries</div>
+            <div class="d-flex gap-2 align-items-center">
+              <input id="${searchId}"
+                     type="text"
+                     class="form-control form-control-sm attribute-search-input"
+                     placeholder="Search…"
+                     data-target-table="${tableId}">
+              <button type="button"
+                      class="attribute-zoom-btn"
+                      data-zoom-layer-id="${layerId}"
+                      title="Zoom to all features"
+                      aria-label="Zoom to all features">
+                <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-dark table-striped align-middle mb-1 attribute-table"
+                   id="${tableId}">
+              <thead><tr>${headerCells}</tr></thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
           </div>
         </div>
-        <div class="table-responsive">
-          <table class="table table-sm table-dark table-striped align-middle mb-1 attribute-table"
-                 id="${tableId}">
-            <thead><tr>${headerCells}</tr></thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-        </div>
-      </div>
-    `;
+      `;
 
       this.attributeTablesEl.insertAdjacentHTML("beforeend", html);
 
@@ -446,6 +527,7 @@
     }
 
     onBoundaryClick(e, layerId) {
+      // Ignore boundary click if it was immediately preceded by a socio click
       if (Date.now() - this.getLastSocioClickTime() < 200) {
         return;
       }
@@ -480,42 +562,25 @@
           props.name ||
           "Boundary";
 
-        const html = `
-        <div class="small popup-body">
-          <div class="fw-semibold mb-1">${name}</div>
-          <div class="mb-2">
-            Use the attribute panel to explore full attributes.
-          </div>
-          <div class="d-flex justify-content-end mt-1">
-            <button id="boundaryAnalyzeBtn" type="button"
-                    class="btn btn-primary btn-sm">
-              Run analysis
-            </button>
-          </div>
-        </div>
-      `;
-
         const popup = new maplibregl.Popup({
           closeButton: true,
           closeOnClick: true,
+          maxWidth: "340px",
         })
           .setLngLat(e.lngLat)
-          .setHTML(html)
+          .setHTML(this._buildBoundaryPopupHtml(name))
           .addTo(this.map);
 
-        setTimeout(() => {
-          const btn = document.getElementById("boundaryAnalyzeBtn");
-          if (!btn) return;
+        this._activePopup = popup;
+        this._activePopupCtx = { feature, name };
+        popup.on("close", () => {
+          if (this._activePopup === popup) {
+            this._activePopup = null;
+            this._activePopupCtx = null;
+          }
+        });
 
-          btn.addEventListener("click", () => {
-            if (!this.analysisManager.currentSuitability) {
-              this.setStatus("Select a suitability map first.", true);
-              return;
-            }
-            this.analysisManager.runBoundaryAnalysis(feature, name);
-            popup.remove();
-          });
-        }, 0);
+        this._attachBoundaryPopupHandlers(popup, feature, name);
       } catch (err) {
         console.error("onBoundaryClick failed", err);
       }

@@ -1,16 +1,17 @@
 # mapviewer/views.py
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from django.conf import settings
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.core.cache import cache
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 
@@ -200,70 +201,51 @@ def _init_ee() -> bool:
 # Template view
 # ----------------------------------------------------------------------
 def index(request: HttpRequest) -> HttpResponse:
-    """Landing page — showcases the layer groups available in the map app."""
-    # Build a slim summary of what's in each group, keyed by ic_kind/dataset
-    # convention so each card lists countries + sample layer names.
-    groups = []
-
+    """Landing page — showcases the app's use cases."""
     suit = [l for l in LAYERS if l["dataset"].startswith("projects/")
-            and not l["id"].startswith("SOC_")]
-    boundary = [l for l in LAYERS if l["dataset"].startswith("BOUNDARY_")]
+            and not l["id"].startswith("SOC_")
+            and l.get("country", "Zimbabwe") == "Zimbabwe"]
     irrigation = [l for l in LAYERS if l.get("ic_kind") == "irrigation"]
-    # Socio is hardcoded in the template but mirrored here for the card preview
-    socio_samples = [
-        "Masvingo (asset)",
-        "Solar pump providers",
-        "Matabeleland South",
-        "Mashonaland Central",
-    ]
-
-    def _countries(items):
-        return sorted({l.get("country", "Zimbabwe") for l in items})
 
     groups = [
         {
-            "id": "suitability",
+            "id": "zwe-suitability",
             "icon": "bi-droplet-half",
-            "title_key": "lp_card_suit_title",
-            "title": "Irrigation suitability",
-            "desc_key": "lp_card_suit_desc",
-            "desc": "Multi-criteria rasters classifying land into N / S1 / S2 / S3 suitability.",
-            "countries": _countries(suit),
+            "title": "Zimbabwe — irrigation suitability",
+            "desc": (
+                "Multi-criteria N / S1 / S2 / S3 rasters across Zimbabwean "
+                "provinces. Combine with admin boundaries to target investments."
+            ),
+            "countries": ["Zimbabwe"],
             "sample": [l["label"] for l in suit][:4],
             "count": len(suit),
+            "coming_soon": False,
         },
         {
-            "id": "boundaries",
-            "icon": "bi-bounding-box",
-            "title_key": "lp_card_admin_title",
-            "title": "Administrative boundaries",
-            "desc_key": "lp_card_admin_desc",
-            "desc": "Country-specific admin units from FAO/GAUL plus custom historical assets.",
-            "countries": _countries(boundary),
-            "sample": [l["label"] for l in boundary][:4],
-            "count": len(boundary),
-        },
-        {
-            "id": "socio",
-            "icon": "bi-people",
-            "title_key": "lp_card_socio_title",
-            "title": "Socio-economic layers",
-            "desc_key": "lp_card_socio_desc",
-            "desc": "Existing irrigation schemes, solar-pump providers, and other field-level reference data.",
-            "countries": ["Zimbabwe"],
-            "sample": socio_samples,
-            "count": len(socio_samples),
-        },
-        {
-            "id": "irrigation",
+            "id": "zaf-irrigation",
             "icon": "bi-calendar3",
-            "title_key": "lp_card_irrigation_title",
-            "title": "Irrigation maps (monthly)",
-            "desc_key": "lp_card_irrigation_desc",
-            "desc": "Sentinel-2 + Dynamic World derived irrigation masks per month, with raw / probability / filtered bands.",
-            "countries": _countries(irrigation),
-            "sample": [l["label"] for l in irrigation][:4],
+            "title": "South Africa — monthly irrigation in former homelands",
+            "desc": (
+                "Sentinel-2 + Dynamic World irrigation masks across pre-1994 "
+                "homeland boundaries. Track seasonal change district-by-district."
+            ),
+            "countries": ["South Africa"],
+            "sample": ["Filtered band", "Probability band", "Raw band", "Homeland boundaries"],
             "count": len(irrigation),
+            "coming_soon": False,
+        },
+        {
+            "id": "ago-coming",
+            "icon": "bi-hourglass-split",
+            "title": "Angola — coming soon",
+            "desc": (
+                "Layer suite under construction. Admin boundaries and irrigation "
+                "suitability will follow the Zimbabwe template."
+            ),
+            "countries": ["Angola"],
+            "sample": [],
+            "count": 0,
+            "coming_soon": True,
         },
     ]
 
@@ -649,6 +631,91 @@ def gee_map(request: HttpRequest) -> JsonResponse:
                 "tile_url": None,
             },
             status=200,
+        )
+
+
+# ----------------------------------------------------------------------
+# /api/gee/thumbnail/  -> static PNG thumbnail of a dataset
+# ----------------------------------------------------------------------
+# Used by the landing-page carousel. Resolved EE thumb URLs are cached
+# server-side for 6 h so each landing-page hit doesn't pay an EE round-trip.
+@require_GET
+def gee_thumbnail(request: HttpRequest):
+    dataset = (request.GET.get("dataset") or "").strip()
+    if not dataset:
+        return JsonResponse({"error": "Missing 'dataset' parameter"}, status=400)
+
+    try:
+        dim = max(200, min(1024, int(request.GET.get("dim", 600))))
+    except ValueError:
+        dim = 600
+
+    palette_name = (request.GET.get("palette") or "verdant").lower()
+    palette_colors = _SUITABILITY_PALETTES.get(
+        palette_name, _SUITABILITY_PALETTES["verdant"]
+    )
+
+    cache_key = "iv:thumb:" + hashlib.sha1(
+        f"{dataset}|{palette_name}|{dim}".encode("utf-8")
+    ).hexdigest()
+    cached_url = cache.get(cache_key)
+    if cached_url:
+        return HttpResponseRedirect(cached_url)
+
+    if not _init_ee():
+        return JsonResponse(
+            {"error": _EE_INIT_ERROR or "Earth Engine not initialized"},
+            status=503,
+        )
+
+    try:
+        import ee  # type: ignore
+
+        image = None
+        thumb_params: Dict[str, Any] = {"dimensions": dim, "format": "png"}
+
+        irr = _parse_irrigation_dataset(dataset)
+        if irr:
+            iso, band = irr
+            ic = ee.ImageCollection(_SA_IRRIGATION_IC)
+            img = ic.filter(ee.Filter.eq("iso_period", iso)).first()
+            _ = img.bandNames().getInfo()  # raises if period missing
+            image = ee.Image(img).select(band)
+            if band == "probability":
+                thumb_params.update(
+                    {"min": 0, "max": 1, "palette": ["#ffffff", "#00ffff", "#0000fa"]}
+                )
+            else:
+                image = image.selfMask()
+                thumb_params.update({"min": 1, "max": 1, "palette": ["#1a9641"]})
+            country = ee.FeatureCollection("FAO/GAUL/2015/level0").filter(
+                ee.Filter.eq("ADM0_NAME", "South Africa")
+            )
+            thumb_params["region"] = country.geometry().bounds()
+
+        else:
+            try:
+                img = ee.Image(dataset)
+                _ = img.bandNames()  # touches the asset
+                image = img
+                thumb_params.update(
+                    {"min": 0, "max": 3, "palette": palette_colors}
+                )
+                thumb_params["region"] = img.geometry().bounds()
+            except Exception:
+                return JsonResponse(
+                    {"error": f"Unsupported dataset for thumbnail: {dataset}"},
+                    status=400,
+                )
+
+        url = image.getThumbURL(thumb_params)
+        cache.set(cache_key, url, timeout=6 * 60 * 60)
+        return HttpResponseRedirect(url)
+
+    except Exception as e:
+        return JsonResponse(
+            {"error": f"Thumbnail generation failed: {e}"},
+            status=500,
         )
 
 

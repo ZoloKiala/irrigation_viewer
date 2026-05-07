@@ -565,6 +565,7 @@
         const popup = new maplibregl.Popup({
           closeButton: true,
           closeOnClick: true,
+          maxWidth: "340px",
         })
           .setLngLat(e.lngLat)
           .setHTML(this._buildBoundaryPopupHtml(name))

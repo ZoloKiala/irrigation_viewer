@@ -20,14 +20,8 @@
     <!-- AOS (Animate On Scroll) — https://github.com/michalsnik/aos
          Tiny (~14 KB), declarative via data-aos attributes. -->
     <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css"
-          integrity="sha384-S4D2BDQzHbCvElMMV6gsrNN2oLhdUNL3JE7JBsBsbR/Wlyt/MYrcMsnPgjFoKtlX"
-          crossorigin="anonymous"/>
+          href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css"/>
 
-    <!-- TwentyTwenty — drag image-comparison slider
-         (https://www.jqueryscript.net/tags.php?/Drag/) -->
-    <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/gh/zurb/twentytwenty/css/twentytwenty.css"/>
   </head>
   <body class="lp-body">
 
@@ -60,7 +54,7 @@
         <div class="lp-hero-inner">
           <span class="lp-eyebrow"
                 data-aos="fade-down" data-aos-duration="500">
-            Limpopo River Basin · Decision-support tool
+            Country River Basin · Decision-support tool
           </span>
           <h1 class="lp-h1"
               data-aos="fade-up" data-aos-delay="80">
@@ -80,66 +74,127 @@
               Open the map
             </a>
             <a href="#groups" class="lp-btn lp-btn-ghost lp-btn-lg">
-              Browse layers
+              Use cases
               <i class="bi bi-arrow-down" aria-hidden="true"></i>
             </a>
           </div>
-          <ul class="lp-stat-row" aria-label="Data summary"
-              data-aos="fade-up" data-aos-delay="440">
-            <li><strong>4</strong> layer groups</li>
-            <li><strong>3</strong> countries scaffolded</li>
-            <li><strong>30 m</strong> raster scale</li>
-            <li><strong>EN · PT</strong> bilingual</li>
-          </ul>
         </div>
 
-        <!-- Drag-handle image comparison: wet season (left of handle) vs dry season
-             (right of handle). Same Vaalharts AOI, two different Sentinel-2 windows.
-             Powered by TwentyTwenty (jQuery plugin) — drag the handle to reveal. -->
-        <figure class="lp-hero-figure" aria-hidden="false"
-                aria-label="Drag to compare wet-season and dry-season Vaalharts irrigation"
+        <!-- Carousel of sample outputs from the live app. Raster slides are
+             served by /api/gee/thumbnail/ (server-side cached for 6 h, so
+             EE round-trips happen at most twice a day per worker). Static
+             slides reference PNGs in mapviewer/static/mapviewer/ — drop a
+             new file in there and add a slide to extend. -->
+        <figure class="lp-hero-figure"
+                aria-label="Sample outputs from the Irrigation Viewer"
                 data-aos="zoom-in-left" data-aos-duration="900" data-aos-delay="200">
-          <div class="lp-compare twentytwenty-container">
-            <img src="{% static 'mapviewer/irrigation_hero_wet.jpg' %}"
-                 alt="Wet-season Sentinel-2 image of Vaalharts (Dec 2023 – Feb 2024)"
-                 class="lp-compare-img" loading="eager"/>
-            <img src="{% static 'mapviewer/irrigation_hero.jpg' %}"
-                 alt="Dry-season Sentinel-2 image of Vaalharts (Apr – Sep 2024)"
-                 class="lp-compare-img" loading="eager"/>
+          <div id="lpHeroCarousel"
+               class="carousel slide carousel-fade lp-carousel"
+               data-bs-ride="carousel"
+               data-bs-interval="5000">
+            <div class="carousel-inner">
+
+              <div class="carousel-item active">
+                <img src="{% url 'mapviewer:gee_thumbnail' %}?dataset=projects/tethys-app-1/assets/Manicaland"
+                     class="lp-compare-img"
+                     alt="Suitability map · Manicaland (Zimbabwe)"
+                     loading="eager"/>
+                <figcaption class="lp-hero-caption">
+                  <span class="lp-hero-caption-dot"></span>
+                  Suitability map · Manicaland
+                </figcaption>
+              </div>
+
+              <div class="carousel-item">
+                <img src="{% url 'mapviewer:gee_thumbnail' %}?dataset=IRR_SA_2024-09%3Ffiltered"
+                     class="lp-compare-img"
+                     alt="Monthly irrigated extent · South Africa (Sep 2024)"
+                     loading="lazy"/>
+                <figcaption class="lp-hero-caption">
+                  <span class="lp-hero-caption-dot"></span>
+                  Monthly irrigation · South Africa
+                </figcaption>
+              </div>
+
+              <div class="carousel-item">
+                <img src="{% static 'mapviewer/irrigation_hero.jpg' %}"
+                     class="lp-compare-img lp-compare-img--cover"
+                     alt="Vaalharts irrigation · dry season"
+                     loading="lazy"/>
+                <figcaption class="lp-hero-caption">
+                  <span class="lp-hero-caption-dot"></span>
+                  Vaalharts · dry season
+                </figcaption>
+              </div>
+
+              <div class="carousel-item">
+                <img src="{% static 'mapviewer/landing_slide_results.png' %}"
+                     class="lp-compare-img"
+                     alt="Suitability area-by-class results · Manicaland"
+                     loading="lazy"/>
+                <figcaption class="lp-hero-caption">
+                  <span class="lp-hero-caption-dot"></span>
+                  Area-by-class results · Manicaland
+                </figcaption>
+              </div>
+
+            </div>
+
+            <button class="carousel-control-prev" type="button"
+                    data-bs-target="#lpHeroCarousel" data-bs-slide="prev">
+              <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+              <span class="visually-hidden">Previous</span>
+            </button>
+            <button class="carousel-control-next" type="button"
+                    data-bs-target="#lpHeroCarousel" data-bs-slide="next">
+              <span class="carousel-control-next-icon" aria-hidden="true"></span>
+              <span class="visually-hidden">Next</span>
+            </button>
+
+            <div class="carousel-indicators">
+              <button type="button" data-bs-target="#lpHeroCarousel"
+                      data-bs-slide-to="0" class="active" aria-current="true"
+                      aria-label="Slide 1"></button>
+              <button type="button" data-bs-target="#lpHeroCarousel"
+                      data-bs-slide-to="1" aria-label="Slide 2"></button>
+              <button type="button" data-bs-target="#lpHeroCarousel"
+                      data-bs-slide-to="2" aria-label="Slide 3"></button>
+              <button type="button" data-bs-target="#lpHeroCarousel"
+                      data-bs-slide-to="3" aria-label="Slide 4"></button>
+            </div>
           </div>
-          <figcaption class="lp-hero-caption">
-            <span class="lp-hero-caption-dot"></span>
-            Drag to compare wet vs dry season · Vaalharts
-          </figcaption>
         </figure>
       </section>
 
-      <!-- Layer groups showcase -->
+      <!-- Use-case cards -->
       <section id="groups" class="lp-section lp-groups" data-section-name="groups">
         <header class="lp-section-head"
                 data-aos="fade-up">
-          <span class="lp-eyebrow">Layer groups</span>
-          <h2 class="lp-h2">Four ways to look at the basin</h2>
+          <span class="lp-eyebrow">Use cases</span>
+          <h2 class="lp-h2">Three ways the app supports planners</h2>
           <p class="lp-section-sub">
-            Each card opens the map app with that group already in view.
-            Toggle layers on the left, draw polygons or click admin units to run
-            area-by-class analyses.
+            Each card highlights a question the Irrigation Viewer is built to answer.
+            Open the map to start exploring — toggle layers, draw polygons, click admin units to run area-by-class analyses.
           </p>
         </header>
 
         <div class="lp-grid">
           {% for g in groups %}
             <a href="{% url 'mapviewer:map' %}#group={{ g.id }}"
-               class="lp-card"
+               class="lp-card{% if g.coming_soon %} lp-card-coming{% endif %}"
                data-group="{{ g.id }}"
-               data-aos="fade-up"
+               data-aos="{% cycle 'fade-right' 'zoom-in-up' 'fade-left' %}"
                data-aos-delay="{{ forloop.counter0|add:1|stringformat:'d' }}00">
               <div class="lp-card-icon">
                 <i class="bi {{ g.icon }}" aria-hidden="true"></i>
               </div>
               <div class="lp-card-body">
                 <div class="lp-card-meta">
-                  <span class="lp-card-count">{{ g.count }} layer{{ g.count|pluralize }}</span>
+                  {% if g.coming_soon %}
+                    <span class="lp-card-count">Coming soon</span>
+                  {% else %}
+                    <span class="lp-card-count">{{ g.count }} layer{{ g.count|pluralize }}</span>
+                  {% endif %}
                   {% for c in g.countries %}
                     <span class="lp-card-pill">{{ c }}</span>
                   {% endfor %}
@@ -155,7 +210,7 @@
                 {% endif %}
               </div>
               <div class="lp-card-cta">
-                Explore
+                {% if g.coming_soon %}Stay tuned{% else %}Explore{% endif %}
                 <i class="bi bi-arrow-right" aria-hidden="true"></i>
               </div>
             </a>
@@ -171,17 +226,17 @@
           <h2 class="lp-h2">From layer to insight in three steps</h2>
         </header>
         <ol class="lp-step-list">
-          <li data-aos="fade-up" data-aos-delay="100">
+          <li data-aos="flip-left" data-aos-delay="100">
             <span class="lp-step-num">1</span>
             <h3>Pick a country and layer</h3>
             <p>Open the map, select <strong>Zimbabwe</strong> or <strong>South Africa</strong>, and toggle a layer in the sidebar.</p>
           </li>
-          <li data-aos="fade-up" data-aos-delay="220">
+          <li data-aos="flip-left" data-aos-delay="220">
             <span class="lp-step-num">2</span>
             <h3>Define an area of interest</h3>
             <p>Draw a polygon with the pen tool, or click an admin boundary — the popup gives you a "Run analysis" button.</p>
           </li>
-          <li data-aos="fade-up" data-aos-delay="340">
+          <li data-aos="flip-left" data-aos-delay="340">
             <span class="lp-step-num">3</span>
             <h3>Read the breakdown</h3>
             <p>Area-by-suitability-class chart appears in the sidebar; tweak the layer's palette or opacity in the Tweaks panel.</p>
@@ -193,65 +248,53 @@
     <footer class="lp-section lp-footer" data-section-name="footer">
       <div class="lp-footer-inner" data-aos="fade-up">
         <p class="lp-footer-tagline">
-          Built for the Limpopo River Basin · open-source, bilingual EN/PT.
+          Built for the Country River Basin · open-source, bilingual EN/PT.
         </p>
         <a href="{% url 'mapviewer:map' %}" class="lp-btn lp-btn-primary lp-btn-lg">
           <i class="bi bi-map" aria-hidden="true"></i>
           Open the map
         </a>
+        <p class="lp-footer-contact">
+          <i class="bi bi-envelope" aria-hidden="true"></i>
+          Contact:
+          <a href="mailto:z.kiala@cgiar.org">z.kiala@cgiar.org</a>
+        </p>
         <small class="lp-footer-credit">
           © Irrigation Viewer · built by IWMI
         </small>
       </div>
     </footer>
 
-    <!-- jQuery + TwentyTwenty (drag image-comparison slider) -->
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
-            integrity="sha384-1H217gwSVyLSIfaLxHbE7dRb3v4mYCKbpQvzx0cegeju1MVsGrX5xXxAvs/HgeFs"
+    <!-- Bootstrap bundle — provides the carousel JS (and Popper, unused here). -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
             crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/gh/stephband/jquery.event.move/js/jquery.event.move.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/zurb/twentytwenty/js/jquery.twentytwenty.js"></script>
 
     <!-- AOS — animate elements when they enter the viewport -->
-    <script src="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.js"
-            integrity="sha384-Vyji4ATmqOZnyt2ECptTOH63eLFHVLSm3RZ52FQYUf7+/MzxiK4t1Dk1OfXr7QLA"
-            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.js"></script>
     <script>
-      // Drag-comparison slider (TwentyTwenty)
-      (function () {
-        if (typeof window.jQuery !== "function") return;
-        var $ = window.jQuery;
-        if (typeof $.fn.twentytwenty !== "function") return;
-        // Wait for both images to load so the slider sizes correctly
-        $(window).on("load", function () {
-          $(".lp-compare").twentytwenty({
-            default_offset_pct: 0.5,
-            orientation: "horizontal",
-            before_label: "Wet · Dec 2023",
-            after_label:  "Dry · Aug 2024",
-            no_overlay: false,
-            move_slider_on_hover: false,
-            move_with_handle_only: true,
-            click_to_move: true,
-          });
-        });
-      })();
-
-      // AOS init
-      (function () {
-        if (typeof window.AOS !== "object") return;
+      // AOS init — wait for window load so all images are sized before AOS
+      // measures element positions (otherwise lazy images can offset triggers).
+      window.addEventListener("load", function () {
+        if (typeof window.AOS !== "object") {
+          console.warn("[landing] AOS library failed to load — animations disabled.");
+          return;
+        }
         AOS.init({
-          duration: 700,
+          duration: 900,
           easing: "ease-out-cubic",
-          once: true,            // animate only the first time an element scrolls into view
-          offset: 80,            // start animating 80 px before the element enters
+          once: true,
+          offset: 120,
           delay: 0,
+          anchorPlacement: "top-bottom",
           disable: function () {
-            // Respect users who've asked for reduced motion + skip on tiny viewports.
             return window.matchMedia("(prefers-reduced-motion: reduce)").matches
                 || window.innerWidth < 480;
           },
         });
+        console.log("[landing] AOS initialised.");
+      });
+      (function () {
 
         // Smooth-scroll for the in-page "Browse layers" anchor.
         document.querySelectorAll('a[href="#groups"]').forEach(function (a) {

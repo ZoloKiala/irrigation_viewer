@@ -5,6 +5,10 @@
 
   const API = window.MAPVIEWER || (window.MAPVIEWER = {});
 
+  // Translation helper — falls back to the English string if ivT() isn't loaded yet.
+  const _t = (key, fallback) =>
+    typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
+
   function initMap() {
     const mapEl = API.mapEl;
     if (!mapEl) return;
@@ -178,7 +182,7 @@
       map.addControl(draw, "top-left");
     } else {
       console.error("MapboxDraw is not loaded.");
-      API.setStatus("Drawing tools unavailable (Draw plugin not loaded).", true);
+      API.setStatus(_t("status_draw_unavailable", "Drawing tools unavailable (Draw plugin not loaded)."), true);
     }
 
     API.draw = draw;
@@ -195,6 +199,8 @@
       highlight: API.setHighlight,
       clearHighlight: API.clearHighlight,
     });
+    // Stash on API so other modules (Tweaks repaint) can reach it.
+    API.analysisManager = analysisManager;
 
     const boundaryManager = new API.BoundaryManager({
       map,
@@ -246,9 +252,22 @@
     };
 
     if (draw) {
-      map.on("draw.create", () => analysisManager.runFreehandAnalysis());
-      map.on("draw.update", () => analysisManager.runFreehandAnalysis());
+      // Debounce so dragging vertices doesn't spam /gee/analyze with every pixel.
+      let _drawAnalyzeTimer = null;
+      const debouncedRunAnalysis = () => {
+        if (_drawAnalyzeTimer) clearTimeout(_drawAnalyzeTimer);
+        _drawAnalyzeTimer = setTimeout(() => {
+          _drawAnalyzeTimer = null;
+          analysisManager.runFreehandAnalysis();
+        }, 400);
+      };
+      map.on("draw.create", debouncedRunAnalysis);
+      map.on("draw.update", debouncedRunAnalysis);
       map.on("draw.delete", () => {
+        if (_drawAnalyzeTimer) {
+          clearTimeout(_drawAnalyzeTimer);
+          _drawAnalyzeTimer = null;
+        }
         analysisManager.resetForDrawDelete();
       });
     }
@@ -279,7 +298,7 @@
     });
 
     map.on("load", () => {
-      API.setStatus("Map ready. Choose a suitability layer to begin.", false);
+      API.setStatus(_t("status_map_ready", "Map ready. Choose a suitability layer to begin."), false);
 
       API.addBasemapLayers();
 
@@ -328,6 +347,15 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     if (!API.mapEl) return;
+
+    if (API.updateLayerTreeForCountry) {
+      API.updateLayerTreeForCountry();
+    }
+    if (API.countrySelect && API.updateLayerTreeForCountry) {
+      API.countrySelect.addEventListener("change", () => {
+        API.updateLayerTreeForCountry();
+      });
+    }
 
     initMap();
     API.wireLayerTreeGroups();

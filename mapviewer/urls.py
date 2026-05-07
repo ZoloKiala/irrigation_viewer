@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/gee/boundaries-geojson/", views.gee_boundaries_geojson, name="gee_boundaries_geojson"),
     path("api/gee/socio-geojson/", views.gee_socio_geojson, name="gee_socio_geojson"),
     path("api/gee/irrigation-periods/", views.gee_irrigation_periods, name="gee_irrigation_periods"),
+    path("api/gee/thumbnail/", views.gee_thumbnail, name="gee_thumbnail"),
     
    
 
