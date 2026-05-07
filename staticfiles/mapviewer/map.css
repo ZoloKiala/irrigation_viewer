@@ -286,6 +286,11 @@ body.sidebar-resizing * {
   font-weight: var(--iv-fw-medium);
   flex-shrink: 0;
 }
+/* Hide the "Active:" label when nothing's selected — the value span
+   then carries a guided CTA ("Select a layer to begin") on its own. */
+.nav-status:not(.nav-status--on) .nav-status-label {
+  display: none;
+}
 .nav-status .text-secondary,
 .nav-status-value{
   color: var(--iv-fg-2) !important;

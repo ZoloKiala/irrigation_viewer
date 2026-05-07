@@ -27,28 +27,28 @@ LAYERS: List[Dict[str, str]] = [
     # Irrigation suitability (assets) — Zimbabwe
     {
         "id": "ASSET_MANICALAND",
-        "label": "Manicaland (asset)",
+        "label": "Manicaland — suitability",
         "label_key": "layer_asset_manicaland",
         "dataset": "projects/tethys-app-1/assets/Manicaland",
         "country": "Zimbabwe",
     },
     {
         "id": "ASSET_MAT_NORTH",
-        "label": "Matabeleland North (asset)",
+        "label": "Matabeleland North — suitability",
         "label_key": "layer_asset_mat_north",
         "dataset": "projects/tethys-app-1/assets/Matebeleland_North",
         "country": "Zimbabwe",
     },
     {
         "id": "ASSET_MAT_SOUTH",
-        "label": "Matabeleland South (asset)",
+        "label": "Matabeleland South — suitability",
         "label_key": "layer_asset_mat_south",
         "dataset": "projects/tethys-app-1/assets/Mat_south",
         "country": "Zimbabwe",
     },
     {
         "id": "ASSET_MASVINGO",
-        "label": "Masvingo (asset)",
+        "label": "Masvingo — suitability",
         "label_key": "layer_asset_masvingo",
         "dataset": "projects/tethys-app-1/assets/Masvingo",
         "country": "Zimbabwe",

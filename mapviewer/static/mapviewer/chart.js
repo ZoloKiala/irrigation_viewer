@@ -41,10 +41,10 @@
     if (typeof window.ivT === "function") {
       return window.ivT(
         "chart_empty",
-        "No analysis yet. Draw a polygon or click a boundary."
+        "Choose a country and map layer, then draw an area or click a boundary to run analysis."
       );
     }
-    return "No analysis yet. Draw a polygon or click a boundary.";
+    return "Choose a country and map layer, then draw an area or click a boundary to run analysis.";
   }
 
   function renderEmpty(container) {

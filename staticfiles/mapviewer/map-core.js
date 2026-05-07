@@ -118,7 +118,10 @@
     if (!activeLayerEl) return;
     const wrapper = activeLayerEl.closest(".nav-status");
     if (!info) {
-      activeLayerEl.textContent = "none";
+      activeLayerEl.textContent =
+        (typeof window.ivT === "function"
+          ? window.ivT("status_active_none", "Select a layer to begin")
+          : "Select a layer to begin");
       if (wrapper) wrapper.classList.remove("nav-status--on");
       return;
     }

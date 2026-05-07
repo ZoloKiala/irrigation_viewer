@@ -63,17 +63,18 @@ const IV_TRANSLATIONS = {
     country_help: "Zoom layers to a basin country.",
     layers_title: "Layers",
     layers_help:
-      "Zimbabwe has suitability, admin and socio-economic layers. South Africa has admin boundaries (Levels 1 & 2). Angola is not configured yet.",
+      "Zimbabwe — suitability, administrative, and socio-economic layers. South Africa — monthly irrigation and selected boundary layers. Angola — coming soon.",
     layers_not_configured_title:
       "Layers not available",
     layers_not_configured:
-      "Layers for {country} are not configured yet.",
+      "Layers for {country} aren't configured yet — check back soon.",
     chart_empty:
-      "No analysis yet. Draw a polygon or click a boundary.",
+      "Choose a country and map layer, then draw an area or click a boundary to run analysis.",
     group_suitability: "Suitability maps",
     group_admin: "Administrative boundaries",
     group_socio: "Socio-economic layers",
     status_active_label: "Active:",
+    status_active_none: "Select a layer to begin",
     search_placeholder: "Search location…",
     basemap_gallery: "Basemap gallery",
     basemap_streets: "Streets",
@@ -101,10 +102,10 @@ const IV_TRANSLATIONS = {
     socio_modal_title: "Indicator scoring",
 
     // Layer labels (server-rendered + hardcoded socio layers)
-    layer_asset_manicaland: "Manicaland (asset)",
-    layer_asset_mat_north: "Matabeleland North (asset)",
-    layer_asset_mat_south: "Matabeleland South (asset)",
-    layer_asset_masvingo: "Masvingo (asset)",
+    layer_asset_manicaland: "Manicaland — suitability",
+    layer_asset_mat_north: "Matabeleland North — suitability",
+    layer_asset_mat_south: "Matabeleland South — suitability",
+    layer_asset_masvingo: "Masvingo — suitability",
     layer_zwe_l1: "Zimbabwe — Admin Level 1 (Provinces)",
     layer_zwe_l2: "Zimbabwe — Admin Level 2 (Districts)",
     layer_zwe_l3: "Zimbabwe — Admin Level 3 (Wards)",
@@ -119,10 +120,10 @@ const IV_TRANSLATIONS = {
     picker_band_filtered: "Filtered",
     picker_band_raw: "Raw",
     picker_band_probability: "Probability",
-    layer_socio_masvingo: "Masvingo (asset)",
-    layer_socio_solar_pumps: "Solar pump providers (asset)",
-    layer_socio_mat_south: "Matabeleland South (asset)",
-    layer_socio_mash_central: "Mashonaland Central (asset)",
+    layer_socio_masvingo: "Masvingo irrigation schemes",
+    layer_socio_solar_pumps: "Solar pump providers",
+    layer_socio_mat_south: "Matabeleland South — irrigation schemes",
+    layer_socio_mash_central: "Mashonaland Central — irrigation schemes",
 
     // Status / progress / error messages (set via setStatus)
     status_select_suit: "Select a suitability map first.",
@@ -185,17 +186,18 @@ const IV_TRANSLATIONS = {
     country_help: "Fazer zoom das camadas para um país da bacia.",
     layers_title: "Camadas",
     layers_help:
-      "Zimbabué inclui mapas de aptidão, limites administrativos e camadas socioeconómicas. África do Sul inclui limites administrativos (Níveis 1 e 2). Angola ainda não está configurada.",
+      "Zimbabué — mapas de aptidão, limites administrativos e camadas socioeconómicas. África do Sul — irrigação mensal e limites selecionados. Angola — em breve.",
     layers_not_configured_title:
       "Camadas indisponíveis",
     layers_not_configured:
-      "As camadas para {country} ainda não estão configuradas.",
+      "As camadas para {country} ainda não estão configuradas — volte em breve.",
     chart_empty:
-      "Sem análise. Desenhe um polígono ou clique num limite.",
+      "Escolha um país e uma camada do mapa, depois desenhe uma área ou clique num limite para executar a análise.",
     group_suitability: "Mapas de aptidão",
     group_admin: "Limites administrativos",
     group_socio: "Camadas socioeconómicas",
     status_active_label: "Ativo:",
+    status_active_none: "Selecione uma camada para começar",
     search_placeholder: "Pesquisar local…",
     basemap_gallery: "Galeria de mapas base",
     basemap_streets: "Ruas",
@@ -223,10 +225,10 @@ const IV_TRANSLATIONS = {
     socio_modal_title: "Pontuação dos indicadores",
 
     // Layer labels
-    layer_asset_manicaland: "Manicaland (recurso)",
-    layer_asset_mat_north: "Matabeleland Norte (recurso)",
-    layer_asset_mat_south: "Matabeleland Sul (recurso)",
-    layer_asset_masvingo: "Masvingo (recurso)",
+    layer_asset_manicaland: "Manicaland — aptidão",
+    layer_asset_mat_north: "Matabeleland Norte — aptidão",
+    layer_asset_mat_south: "Matabeleland Sul — aptidão",
+    layer_asset_masvingo: "Masvingo — aptidão",
     layer_zwe_l1: "Zimbabué — Nível administrativo 1 (Províncias)",
     layer_zwe_l2: "Zimbabué — Nível administrativo 2 (Distritos)",
     layer_zwe_l3: "Zimbabué — Nível administrativo 3 (Wards)",
@@ -241,10 +243,10 @@ const IV_TRANSLATIONS = {
     picker_band_filtered: "Filtrada",
     picker_band_raw: "Bruta",
     picker_band_probability: "Probabilidade",
-    layer_socio_masvingo: "Masvingo (recurso)",
-    layer_socio_solar_pumps: "Fornecedores de bombas solares (recurso)",
-    layer_socio_mat_south: "Matabeleland Sul (recurso)",
-    layer_socio_mash_central: "Mashonaland Central (recurso)",
+    layer_socio_masvingo: "Esquemas de irrigação de Masvingo",
+    layer_socio_solar_pumps: "Fornecedores de bombas solares",
+    layer_socio_mat_south: "Matabeleland Sul — esquemas de irrigação",
+    layer_socio_mash_central: "Mashonaland Central — esquemas de irrigação",
 
     // Status / progress / error messages
     status_select_suit: "Selecione primeiro um mapa de aptidão.",
