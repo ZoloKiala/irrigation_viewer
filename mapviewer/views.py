@@ -657,26 +657,30 @@ def gee_thumbnail(request: HttpRequest):
 
     # Static fallback served when EE/getThumbURL fails — guarantees the
     # carousel never shows a broken image even if the EE round-trip fails
-    # (auth, asset unavailable, network blip, cold start, ...).
+    # (auth, asset unavailable, network blip, cold start, token rejected,
+    # ...). We proxy the PNG bytes server-side so a 401 from EE is caught
+    # here and replaced with the fallback, instead of being shown to the
+    # browser as a broken image.
     from django.templatetags.static import static
     fallback_url = static("mapviewer/irrigation_hero.jpg")
 
-    cache_key = "iv:thumb:" + hashlib.sha1(
+    def _fallback(reason: str) -> HttpResponse:
+        resp = HttpResponseRedirect(fallback_url)
+        resp["X-Thumb-Fallback-Reason"] = reason[:250]
+        return resp
+
+    # Cache the PNG bytes (not the EE URL). EE thumbnail tokens are
+    # short-lived and sometimes rejected even right after generation,
+    # so once we have valid bytes, hold onto them for 6 h.
+    cache_key = "iv:thumb_png:" + hashlib.sha1(
         f"{dataset}|{palette_name}|{dim}".encode("utf-8")
     ).hexdigest()
-    cached_url = cache.get(cache_key)
-    if cached_url:
-        return HttpResponseRedirect(cached_url)
+    cached_bytes = cache.get(cache_key)
+    if cached_bytes:
+        return HttpResponse(cached_bytes, content_type="image/png")
 
     if not _init_ee():
-        # Don't return JSON here — the browser is loading this URL as <img>,
-        # so JSON renders as a broken-image icon. Redirect to a placeholder
-        # and surface the real error in the response headers for debugging.
-        resp = HttpResponseRedirect(fallback_url)
-        resp["X-Thumb-Fallback-Reason"] = (
-            _EE_INIT_ERROR or "Earth Engine not initialized"
-        )[:250]
-        return resp
+        return _fallback(_EE_INIT_ERROR or "Earth Engine not initialized")
 
     try:
         import ee  # type: ignore
@@ -713,20 +717,36 @@ def gee_thumbnail(request: HttpRequest):
                 )
                 thumb_params["region"] = img.geometry().bounds()
             except Exception as e:
-                resp = HttpResponseRedirect(fallback_url)
-                resp["X-Thumb-Fallback-Reason"] = (
-                    f"Unsupported dataset: {dataset} ({e})"
-                )[:250]
-                return resp
+                return _fallback(f"Unsupported dataset: {dataset} ({e})")
 
         url = image.getThumbURL(thumb_params)
-        cache.set(cache_key, url, timeout=6 * 60 * 60)
-        return HttpResponseRedirect(url)
-
     except Exception as e:
-        resp = HttpResponseRedirect(fallback_url)
-        resp["X-Thumb-Fallback-Reason"] = f"getThumbURL failed: {e}"[:250]
+        return _fallback(f"getThumbURL failed: {e}")
+
+    # Proxy the bytes through Django so the browser never sees the EE
+    # URL — sidesteps client-side token-validation issues.
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "irrigation-viewer/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = r.read()
+            ctype = r.headers.get("Content-Type", "image/png")
+        if not ctype.startswith("image/"):
+            # EE returned JSON (typically an error envelope). Fall back.
+            return _fallback(
+                f"EE returned non-image ({ctype}, {len(body)} bytes)"
+            )
+        cache.set(cache_key, body, timeout=6 * 60 * 60)
+        resp = HttpResponse(body, content_type=ctype)
+        resp["Cache-Control"] = "public, max-age=21600"  # 6 h
         return resp
+    except urllib.error.HTTPError as e:
+        return _fallback(f"EE thumb fetch HTTP {e.code}")
+    except Exception as e:
+        return _fallback(f"EE thumb fetch failed: {e}")
 
 
 # ----------------------------------------------------------------------
