@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # ---- Python (this repo: Django app with requirements.txt) ----
+      - name: Set up Python
+        if: ${{ hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        if: ${{ hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != '' }}
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
+      # Smoke test: confirm the Django project imports and its system checks
+      # pass. Uses throwaway settings via env so no real secret is needed.
+      - name: Django system check
+        if: ${{ hashFiles('manage.py') != '' }}
+        env:
+          DJANGO_SECRET_KEY: ci-not-a-real-secret
+          DJANGO_DEBUG: "false"
+        run: python manage.py check
+
+      - name: Run Python tests
+        if: ${{ hashFiles('tests/**') != '' || hashFiles('**/test_*.py') != '' }}
+        run: pytest
+
+      # ---- Node.js (only runs if a package.json is ever added) ----
+      - name: Set up Node.js
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install Node dependencies with lockfile
+        if: ${{ hashFiles('package-lock.json') != '' }}
+        run: npm ci
+
+      - name: Install Node dependencies without lockfile
+        if: ${{ hashFiles('package.json') != '' && hashFiles('package-lock.json') == '' }}
+        run: npm install
+
+      - name: Run Node tests
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm test --if-present
