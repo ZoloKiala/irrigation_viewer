@@ -8,6 +8,9 @@ on:
 
 jobs:
   test:
+    # Display/check-run name — matches the "test CI build" required status
+    # check configured in branch protection so the PR can merge.
+    name: test CI build
     runs-on: ubuntu-latest
     permissions:
       contents: read
