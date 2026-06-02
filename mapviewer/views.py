@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.conf import settings
 from django.core.cache import cache
@@ -13,6 +13,8 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonRes
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
+
+import rasterio  # used by the WaPOR local-tile endpoint
 
 
 
@@ -105,12 +107,23 @@ LAYERS: List[Dict[str, str]] = [
         "id": "ZAF_IRRIGATION_MONTHLY",
         "label": "South Africa — Irrigation (monthly)",
         "label_key": "layer_zaf_irrigation_monthly",
-        "dataset": "IRR_SA_2024-09?filtered",
+        "dataset": "IRR_SA_2025-07?filtered",
         "country": "South Africa",
         "has_date_picker": True,
         "ic_kind": "irrigation",
     },
+    {
+        "id": "ZAF_WAPOR_DEKADAL",
+        "label": "South Africa — Crop water use (dekadal)",
+        "label_key": "layer_zaf_wapor_dekadal",
+        "dataset": "WAPOR_SA_2025-07?D2",
+        "country": "South Africa",
+        "has_date_picker": True,
+        "ic_kind": "wapor",
+    },
 ]
+
+
 
 # ----------------------------------------------------------------------
 # Earth Engine init (service account or default)
@@ -172,21 +185,29 @@ def _init_ee() -> bool:
     try:
         import ee  # type: ignore
 
+        # Pin compute to the service-account's own project so that EE runs
+        # under `tethys-app-1` (not the default `earthengine-legacy`).
+        # Without this, tiles built from per-homeland uploaded assets (which
+        # live under `projects/tethys-app-1/assets/`) come back blank even
+        # though the image computation succeeds -- different project context
+        # routes the tile-fetch through a path that masks the result.
         if key_data:
             data = json.loads(key_data)
             service_account = data.get("client_email")
+            project_id = data.get("project_id") or "tethys-app-1"
             if not service_account:
                 raise RuntimeError("client_email missing in service account JSON")
             creds = ee.ServiceAccountCredentials(service_account, key_data=key_data)
-            ee.Initialize(creds)
+            ee.Initialize(creds, project=project_id)
         elif key_path and key_path.exists():
             with key_path.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
             service_account = data.get("client_email")
+            project_id = data.get("project_id") or "tethys-app-1"
             if not service_account:
                 raise RuntimeError("client_email missing in service account JSON")
             creds = ee.ServiceAccountCredentials(service_account, str(key_path))
-            ee.Initialize(creds)
+            ee.Initialize(creds, project=project_id)
         else:
             ee.Initialize()
         _EE_INIT_DONE = True
@@ -297,6 +318,215 @@ _SUITABILITY_PALETTES: Dict[str, List[str]] = {
 _SA_IRRIGATION_IC = "projects/tethys-app-1/assets/sa_irrigation_monthly"
 _SA_IRRIGATION_BANDS = {"raw", "probability", "filtered"}
 
+# Per-homeland chunked exports from extract_homeland_chunked.py. Each folder
+# contains many `chunk_NNNN_<band>` images that together cover one homeland.
+# Mosaicked server-side into the SA-Irrigation map so partial homeland
+# coverage shows up even though those images aren't members of
+# `sa_irrigation_monthly`.
+_HOMELAND_CHUNK_PARENT = "projects/tethys-app-1/assets"
+# Empty: `irrigated_kwandebele` was deleted on 2026-05-21 to free EE asset
+# storage (it had 1,258 chunked images eating ~tens of GiB of the 250 GiB
+# noncommercial quota). The consolidated `<slug>_<period>_10m_<band>`
+# uploads handled by `_homeland_uploaded_mosaic` replace them.
+_HOMELAND_CHUNK_FOLDERS: List[str] = []
+
+
+def _homeland_chunk_mosaic_for_band(band: str):
+    """Return an `ee.Image` that mosaics every `chunk_*_<band>` asset across
+    all configured homeland folders, or None if nothing is available.
+
+    Listing is cached for 5 minutes so the viewer's gee_map endpoint doesn't
+    do an EE listAssets call per page load.
+    """
+    import ee  # noqa: F401 -- imported per-function elsewhere in this module
+    if band not in _SA_IRRIGATION_BANDS:
+        return None
+    cache_key = f"iv:homeland_chunks:{band}"
+    asset_ids = cache.get(cache_key)
+    if asset_ids is None:
+        asset_ids = []
+        for folder in _HOMELAND_CHUNK_FOLDERS:
+            try:
+                listing = ee.data.listAssets({"parent": folder})
+                items = listing.get("assets", [])
+                while listing.get("nextPageToken"):
+                    listing = ee.data.listAssets(
+                        {"parent": folder, "pageToken": listing["nextPageToken"]}
+                    )
+                    items.extend(listing.get("assets", []))
+            except Exception:
+                continue
+            for a in items:
+                name = a["name"]
+                if name.endswith(f"_{band}"):
+                    asset_ids.append(name)
+        cache.set(cache_key, asset_ids, timeout=300)
+    if not asset_ids:
+        return None
+    # Rename each chunk's lone band to the target band name so this mosaic
+    # composes cleanly with the SA IC (whose images have named bands
+    # raw/filtered/probability) and the uploaded-homeland mosaic (also
+    # renamed). Without this rename the resulting image has both a `b1`
+    # band and a `<band>` band; EE's default visualize falls through to
+    # the alphabetically-first band (`b1`), which is masked outside the
+    # chunked-job's footprint -- the bug that caused blank tiles over
+    # CISKEI when chunks + uploaded were both in the layer chain.
+    images = [ee.Image(a).rename(band) for a in asset_ids]
+    return ee.ImageCollection.fromImages(images).mosaic()
+
+
+# Per-homeland uploaded assets from scripts/port/port_irrigation.py outputs
+# (manually ingested via the EE Code Editor). Asset name convention:
+#   projects/tethys-app-1/assets/<slug>_<YYYY-MM>_10m_<band>
+# where <band> is one of raw / filtered / probability. Each asset is a single-
+# band image whose lone band is named `b1` (the EE upload default).
+_HOMELAND_SLUGS = [
+    "kwandebele", "qwaqwa", "ciskei", "kangwana", "venda",
+    "gazankulu", "lebowa", "transkei", "kwazulu", "bophuthatswana",
+]
+
+
+def _homeland_uploaded_mosaic(iso_period: str, band: str):
+    """Mosaic of per-homeland uploaded assets for the given period+band, or
+    None if no such assets exist yet.
+
+    Each uploaded image has a single band named `b1`; we rename it to
+    `band` so it composes cleanly with the SA IC's named bands.
+
+    The earlier implementation issued one `ee.data.getAsset` per homeland
+    slug per cache-miss (10 sequential API calls) which trips EE's
+    request-rate limit while the project is in restricted-quota mode.
+    Replaced with a single paginated `listAssets` of the project's asset
+    root, then a local name-match against the slug set. Cached for 5 min.
+    """
+    import time
+    import ee
+    if band not in _SA_IRRIGATION_BANDS:
+        return None
+    cache_key = f"iv:homeland_uploaded:{iso_period}:{band}"
+    asset_ids = cache.get(cache_key)
+    if asset_ids is None:
+        wanted_suffixes = {
+            f"{slug}_{iso_period}_10m_{band}" for slug in _HOMELAND_SLUGS
+        }
+        # One listAssets call (paginated) instead of N getAsset calls.
+        # Backoff retry: EE in restricted mode 429s aggressively; one
+        # extra attempt with a short pause clears most transient bursts.
+        parent = "projects/tethys-app-1/assets"
+        items: List[Dict[str, Any]] = []
+        for attempt in (1, 2, 3):
+            try:
+                listing = ee.data.listAssets({"parent": parent})
+                items = listing.get("assets", [])
+                while listing.get("nextPageToken"):
+                    listing = ee.data.listAssets(
+                        {"parent": parent, "pageToken": listing["nextPageToken"]}
+                    )
+                    items.extend(listing.get("assets", []))
+                break
+            except Exception:
+                if attempt == 3:
+                    # Cache an empty result briefly so we don't hammer the
+                    # rate-limited backend; let it heal naturally.
+                    cache.set(cache_key, [], timeout=60)
+                    return None
+                time.sleep(2 * attempt)
+
+        asset_ids = []
+        for a in items:
+            name = a.get("name", "")
+            short = name.rsplit("/", 1)[-1]
+            if short in wanted_suffixes and a.get("type") == "IMAGE":
+                asset_ids.append(name)
+        cache.set(cache_key, asset_ids, timeout=300)
+    if not asset_ids:
+        return None
+    images = [ee.Image(a).rename(band) for a in asset_ids]
+    return ee.ImageCollection.fromImages(images).mosaic()
+
+# Crop water use (WaPOR 20 m downscaled). One local GeoTIFF per dekad; tiles
+# are produced on demand by ``wapor_tile`` using rio-tiler. The "dekad" key
+# matches the suffix sent in the dataset string ``WAPOR_SA_2025-07?D2``.
+_WAPOR_LOCAL_ROOT = Path(__file__).resolve().parent.parent.parent / "out" / "wapor"
+_WAPOR_DEKAD_TO_DATE = {
+    "D1": "2025-07-01",
+    "D2": "2025-07-11",
+    "D3": "2025-07-21",
+}
+_WAPOR_PERIOD_LABELS = {"2025-07": "July 2025"}
+
+# WaPOR is served from EE assets ingested from the merged mosaics
+# (projects/tethys-app-1/assets/wapor_<dekad_date>), so the DEPLOYED app can
+# display it without the local out/wapor/*.tif files being present on the
+# server. (The local rio-tiler endpoint `wapor_tile` is kept for direct/dev
+# use but is no longer what gee_map points the viewer at.)
+_WAPOR_ASSET_PREFIX = "projects/tethys-app-1/assets/wapor_"
+# Discrete approximation of matplotlib 'turbo' (the local renderer's colormap)
+# so the EE-served layer looks consistent with the legend.
+_WAPOR_PALETTE = [
+    "30123b", "4145ab", "4675ed", "39a2fc", "1bcfd4", "24eca6",
+    "61fc6c", "a4fc3b", "d1e834", "f3c63a", "fe9b2d", "f36315",
+    "cb2a04", "7a0403",
+]
+# Per-dekad linear stretch (p2..p98 measured from the ingested mosaics). The
+# EE project is compute-throttled, so these are hardcoded rather than computed
+# via reduceRegion on every request.
+_WAPOR_STRETCH = {
+    "2025-07-01": (9.8, 23.9),
+    "2025-07-11": (8.9, 19.2),
+    "2025-07-21": (10.4, 21.4),
+}
+
+
+def _wapor_rescale_for(tif_path: Path) -> tuple[float, float]:
+    """Return (vmin, vmax) at p2 / p98 of the mosaic, for legend display only.
+
+    The tile renderer uses quantile stretching (_wapor_quantile_lut), so the
+    rescale here is just what we expose on the legend axis to give a viewer
+    an honest idea of the data range. Cached for 24 h.
+    """
+    key = f"iv:wapor_rescale_v3:{tif_path.name}"
+    cached = cache.get(key)
+    if cached:
+        return cached
+    try:
+        import numpy as np
+        with rasterio.open(tif_path) as src:
+            a = src.read(1)
+            valid = a[(a != src.nodata) & np.isfinite(a)]
+            if valid.size == 0:
+                return (0.0, 30.0)
+            lo, hi = float(np.percentile(valid, 2)), float(np.percentile(valid, 98))
+            if hi - lo < 1e-3:
+                hi = lo + 1.0
+    except Exception:
+        return (0.0, 30.0)
+    cache.set(key, (lo, hi), timeout=24 * 60 * 60)
+    return (lo, hi)
+
+
+def _wapor_quantile_lut(tif_path: Path):
+    """Return a sorted sample of valid mosaic values for quantile lookup.
+
+    Used by ``wapor_tile`` to remap each tile pixel to its quantile in the
+    full-mosaic distribution, so adjacent fields with similar ETa values get
+    distinguishable colors regardless of how tightly the data clusters.
+    """
+    key = f"iv:wapor_quantile_lut_v1:{tif_path.name}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    import numpy as np
+    with rasterio.open(tif_path) as src:
+        a = src.read(1)
+        valid = a[(a != src.nodata) & np.isfinite(a)]
+    if valid.size > 20000:
+        rng = np.random.default_rng(0)
+        valid = rng.choice(valid, 20000, replace=False)
+    sorted_vals = np.sort(valid).astype("float32")
+    cache.set(key, sorted_vals, timeout=24 * 60 * 60)
+    return sorted_vals
+
 
 def _parse_irrigation_dataset(dataset: str):
     """Parse 'IRR_SA_2024-06?filtered' -> ('2024-06', 'filtered'). Returns
@@ -311,6 +541,18 @@ def _parse_irrigation_dataset(dataset: str):
     if not iso:
         return None
     return iso, band
+
+
+def _parse_wapor_dataset(dataset: str):
+    """Parse 'WAPOR_SA_2025-07?D2' -> ('2025-07', 'D2', '2025-07-11')."""
+    if not dataset or not dataset.startswith("WAPOR_SA_"):
+        return None
+    rest = dataset[len("WAPOR_SA_"):]
+    iso, _, dekad = rest.partition("?")
+    dekad = (dekad or "D2").upper()
+    if dekad not in _WAPOR_DEKAD_TO_DATE:
+        return None
+    return iso, dekad, _WAPOR_DEKAD_TO_DATE[dekad]
 
 
 def _parse_boundary_dataset(dataset: str):
@@ -476,16 +718,76 @@ def gee_map(request: HttpRequest) -> JsonResponse:
             bounds = _bounds_from_ee_geometry(country.geometry())
 
         # --------------------------------------------------------------
+        # 2c) South Africa WaPOR dekadal crop water use (EE asset)
+        # --------------------------------------------------------------
+        elif _parse_wapor_dataset(dataset):
+            iso, dekad, dekad_date = _parse_wapor_dataset(dataset)
+            asset_id = f"{_WAPOR_ASSET_PREFIX}{dekad_date}"
+            try:
+                # Single-band (b1) ETa mosaic. Mask NoData (-9999) and any
+                # non-positive values so they render transparent.
+                wimg = ee.Image(asset_id).select(0)
+                wimg = wimg.updateMask(wimg.neq(-9999).And(wimg.gt(0)))
+                # The asset is in EPSG:4326; tiles are reprojected to
+                # web-mercator. With the default 'nearest' resampling that
+                # reprojection shows blocky per-tile seams (the "tiled
+                # effect"). Resample bilinearly AFTER masking (so -9999 never
+                # interpolates across the NoData edge) to render smoothly.
+                wimg = wimg.resample("bilinear")
+                image = wimg
+                bounds = _bounds_from_ee_geometry(ee.Image(asset_id).geometry())
+            except Exception as e:
+                return JsonResponse(
+                    {
+                        "dataset": dataset,
+                        "configured": False,
+                        "message": (
+                            f"WaPOR asset not available for {dekad_date} "
+                            f"({asset_id}): {e}"
+                        ),
+                        "tile_url": None,
+                    },
+                    status=200,
+                )
+            lo, hi = _WAPOR_STRETCH.get(dekad_date, (9.0, 23.0))
+            vis = {"min": lo, "max": hi, "palette": _WAPOR_PALETTE}
+            # image / vis / bounds are set above; fall through to the shared
+            # getMapId tile-URL builder + JSON payload below.
+
+        # --------------------------------------------------------------
         # 2b) South Africa monthly irrigation ImageCollection
         # --------------------------------------------------------------
         elif _parse_irrigation_dataset(dataset):
             iso, band = _parse_irrigation_dataset(dataset)
             try:
                 ic = ee.ImageCollection(_SA_IRRIGATION_IC)
-                img = ic.filter(ee.Filter.eq("iso_period", iso)).first()
-                # Will raise if no match
-                _ = img.bandNames().getInfo()
-                image = ee.Image(img).select(band)
+                # `.mosaic()` instead of `.first()`: if more than one image
+                # exists for this iso_period (e.g. SA-wide IC image plus a
+                # later-ingested homeland tile), they're merged. Also
+                # tolerates an empty match -- `mosaic` of an empty IC is an
+                # all-masked image, which then gets layered under the
+                # homeland chunks below.
+                sa_image = (
+                    ic.filter(ee.Filter.eq("iso_period", iso))
+                      .select(band)
+                      .mosaic()
+                )
+                # Layer per-homeland uploaded outputs on top (these are the
+                # locally-classified rasters ingested via Code Editor as
+                # `<slug>_<iso>_10m_<band>` assets). Falls back to the
+                # older `irrigated_<slug>/chunk_*` folders if uploaded
+                # assets don't exist yet for this period+band.
+                uploaded = _homeland_uploaded_mosaic(iso, band)
+                chunks = _homeland_chunk_mosaic_for_band(band)
+                layers = [sa_image]
+                if uploaded is not None:
+                    layers.append(uploaded)
+                if chunks is not None:
+                    layers.append(chunks)
+                image = (
+                    ee.ImageCollection(layers).mosaic()
+                    if len(layers) > 1 else sa_image
+                )
             except Exception as e:
                 return JsonResponse(
                     {
@@ -501,11 +803,15 @@ def gee_map(request: HttpRequest) -> JsonResponse:
                 vis = {"min": 0, "max": 1,
                        "palette": ["#ffffff", "#00ffff", "#0000fa"]}
             else:
-                # raw / filtered are 0/1 binary masks; show only 1.
-                image = image.selfMask()
+                # raw / filtered: any non-zero pixel is irrigated. Tolerate both
+                # the {0,1} raw encoding and the {0,1,2} post-mode filtered
+                # encoding by collapsing to a binary mask before rendering.
+                image = image.gt(0).selfMask()
                 vis = {"min": 1, "max": 1, "palette": ["#1a9641"]}
 
-            # Reuse SA bounds for nice zoom
+            # We mosaic across the SA IC + any homeland chunks, so bounds are
+            # always SA-wide. Frontend's fitBounds for IRR_SA_ will zoom to
+            # the country extent.
             country = ee.FeatureCollection("FAO/GAUL/2015/level0").filter(
                 ee.Filter.eq("ADM0_NAME", "South Africa")
             )
@@ -620,7 +926,13 @@ def gee_map(request: HttpRequest) -> JsonResponse:
         if bounds:
             payload["bounds"] = bounds
 
-        return JsonResponse(payload)
+        # Never let the browser cache this response: the tile_url embeds a
+        # short-lived EE mapid, and a stale cached response makes the viewer
+        # keep requesting old/again-different tiles (seen as a "tiled"/stale
+        # overlay even after a reload).
+        resp = JsonResponse(payload)
+        resp["Cache-Control"] = "no-store"
+        return resp
 
     except Exception as e:
         return JsonResponse(
@@ -700,7 +1012,8 @@ def gee_thumbnail(request: HttpRequest):
                     {"min": 0, "max": 1, "palette": ["#ffffff", "#00ffff", "#0000fa"]}
                 )
             else:
-                image = image.selfMask()
+                # See gee_map() — collapse to binary so {0,1,2} also renders.
+                image = image.gt(0).selfMask()
                 thumb_params.update({"min": 1, "max": 1, "palette": ["#1a9641"]})
             country = ee.FeatureCollection("FAO/GAUL/2015/level0").filter(
                 ee.Filter.eq("ADM0_NAME", "South Africa")
@@ -1207,6 +1520,329 @@ def gee_analyze_admin(request: HttpRequest) -> JsonResponse:
 
 
 # ----------------------------------------------------------------------
+# /api/gee/analyze-irrigation/  POST {geometry, iso_period, band, threshold?}
+# -> total irrigated hectares inside `geometry` for the given period/band.
+# Used by the boundary popup's "Irrigated area" analysis for South Africa.
+# ----------------------------------------------------------------------
+@csrf_exempt
+def gee_analyze_irrigation(request: HttpRequest) -> JsonResponse:
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        body = {}
+
+    geometry = body.get("geometry")
+    iso_period = (body.get("iso_period") or "").strip()
+    band = (body.get("band") or "filtered").strip().lower()
+    try:
+        threshold = float(body.get("threshold", 0.5))
+    except Exception:
+        threshold = 0.5
+
+    if not geometry or not iso_period:
+        return JsonResponse(
+            {"items": [], "message": "geometry and iso_period required"}, status=200
+        )
+    if band not in _SA_IRRIGATION_BANDS:
+        return JsonResponse(
+            {"items": [], "message": f"unsupported band: {band}"}, status=200
+        )
+    if not _init_ee():
+        return JsonResponse({"items": [], "message": "EE not initialized"}, status=200)
+
+    try:
+        import ee  # type: ignore
+
+        ic = ee.ImageCollection(_SA_IRRIGATION_IC)
+        # Same mosaic-with-homelands composition as the map renderer uses
+        # (see gee_map IRR_SA_ branch). Without this, hectare totals for
+        # boundaries overlapping homeland uploads come back as 0 because
+        # those pixels live in the per-homeland assets, not the IC.
+        sa_img = (
+            ic.filter(ee.Filter.eq("iso_period", iso_period))
+              .select(band)
+              .mosaic()
+        )
+        uploaded = _homeland_uploaded_mosaic(iso_period, band)
+        chunks = _homeland_chunk_mosaic_for_band(band)
+        layers = [sa_img]
+        if uploaded is not None:
+            layers.append(uploaded)
+        if chunks is not None:
+            layers.append(chunks)
+        band_img = (
+            ee.ImageCollection(layers).mosaic()
+            if len(layers) > 1 else sa_img
+        )
+
+        if band == "probability":
+            mask = band_img.gte(threshold)
+            irr_label = f"Irrigated (p ≥ {threshold:.2f})"
+        else:
+            # raw / filtered: any non-zero pixel is irrigated. Same convention
+            # the map renderer uses.
+            mask = band_img.gt(0)
+            irr_label = f"Irrigated ({band})"
+
+        region = _ee_geom_from_geojson(geometry)
+        # IMPORTANT: band_img is a mosaic(), and EE resets a mosaic's
+        # projection to the default 1-degree grid (~111 km nominal scale).
+        # Using band_img.projection().nominalScale() here therefore reduces at
+        # ~111 km — one giant pixel over the whole polygon — which collapses
+        # the irrigated area to equal the boundary total (the "100% irrigated"
+        # bug). These assets are 10 m native, so pin the scale explicitly.
+        scale = 10
+
+        pixel_ha = ee.Image.pixelArea().divide(10000).rename("area_ha")
+        irr_dict = pixel_ha.updateMask(mask).reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=region,
+            scale=scale,
+            maxPixels=int(1e10),
+            bestEffort=True,
+            tileScale=4,
+        )
+        total_dict = pixel_ha.reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=region,
+            scale=scale,
+            maxPixels=int(1e10),
+            bestEffort=True,
+            tileScale=4,
+        )
+        irr_val = float(ee.Number(irr_dict.get("area_ha")).getInfo() or 0.0)
+        total_val = float(ee.Number(total_dict.get("area_ha")).getInfo() or 0.0)
+        share = (100.0 * irr_val / total_val) if total_val > 0 else 0.0
+
+        return JsonResponse(
+            {
+                "items": [
+                    {"label": irr_label, "area_ha": irr_val, "share_pct": share},
+                    {"label": "Boundary total", "area_ha": total_val, "share_pct": 100.0},
+                ],
+                "iso_period": iso_period,
+                "band": band,
+                "threshold": threshold if band == "probability" else None,
+            }
+        )
+
+    except Exception as e:
+        return JsonResponse(
+            {"items": [], "message": f"Earth Engine error: {e}"}, status=200
+        )
+
+
+# ----------------------------------------------------------------------
+# /api/wapor/timeseries/  POST {geometry}
+# -> mean ETa per dekad inside geometry, for all locally-available mosaics.
+# Used by the boundary popup's "Crop water use (time series)" analysis.
+# ----------------------------------------------------------------------
+@csrf_exempt
+def wapor_timeseries(request: HttpRequest) -> JsonResponse:
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        body = {}
+    geometry = body.get("geometry")
+    selected_dekad_date = (body.get("dekad_date") or "").strip()
+    start_date = (body.get("start_date") or "").strip()
+    end_date = (body.get("end_date") or "").strip()
+    if not geometry:
+        return JsonResponse({"items": [], "message": "geometry required"}, status=200)
+    if selected_dekad_date and selected_dekad_date not in set(_WAPOR_DEKAD_TO_DATE.values()):
+        return JsonResponse(
+            {"items": [], "message": f"WaPOR period not available: {selected_dekad_date}"},
+            status=200,
+        )
+    available_dekad_dates = set(_WAPOR_DEKAD_TO_DATE.values())
+    if start_date and start_date not in available_dekad_dates:
+        return JsonResponse(
+            {"items": [], "message": f"WaPOR start date not available: {start_date}"},
+            status=200,
+        )
+    if end_date and end_date not in available_dekad_dates:
+        return JsonResponse(
+            {"items": [], "message": f"WaPOR end date not available: {end_date}"},
+            status=200,
+        )
+    if start_date and end_date and start_date > end_date:
+        return JsonResponse(
+            {"items": [], "message": "Start date must be before or equal to end date."},
+            status=200,
+        )
+
+    try:
+        import numpy as np
+        from rasterio.errors import WindowError
+        from rasterio.features import geometry_mask, geometry_window
+        from shapely.geometry import shape
+    except Exception as e:  # noqa: BLE001
+        return JsonResponse({"items": [], "message": f"deps: {e}"}, status=200)
+
+    try:
+        geom = shape(geometry)
+        gb = geom.bounds  # (minx, miny, maxx, maxy)
+    except Exception as e:  # noqa: BLE001
+        return JsonResponse({"items": [], "message": f"bad geometry: {e}"}, status=200)
+
+    items = []
+    dekad_items = _WAPOR_DEKAD_TO_DATE.items()
+    if selected_dekad_date:
+        dekad_items = [
+            (dekad_key, dekad_date)
+            for dekad_key, dekad_date in _WAPOR_DEKAD_TO_DATE.items()
+            if dekad_date == selected_dekad_date
+        ]
+    elif start_date or end_date:
+        lo = start_date or min(available_dekad_dates)
+        hi = end_date or max(available_dekad_dates)
+        dekad_items = [
+            (dekad_key, dekad_date)
+            for dekad_key, dekad_date in _WAPOR_DEKAD_TO_DATE.items()
+            if lo <= dekad_date <= hi
+        ]
+
+    def _stats_for_tif(tif_path: Path):
+        with rasterio.open(tif_path) as src:
+            # geometry_window with padding is safer than from_bounds for tiny
+            # drawn polygons whose bbox can round down to a zero-sized window.
+            try:
+                win = geometry_window(src, [geometry], pad_x=1, pad_y=1)
+            except WindowError:
+                return None, 0
+            a = src.read(1, window=win)
+            t = src.window_transform(win)
+            # all_touched=True counts pixels whose any portion is covered
+            # by the polygon, which is more generous for small drawn AOIs
+            # that wouldn't capture any pixel centers otherwise.
+            mask = geometry_mask(
+                [geometry], out_shape=a.shape, transform=t, invert=True,
+                all_touched=True,
+            )
+            nodata = src.nodata
+            valid = mask & np.isfinite(a)
+            if nodata is not None:
+                valid &= a != nodata
+            if not valid.any():
+                # Last-mile tolerance for very small drawn polygons: if the
+                # polygon itself misses all valid cells, try a tiny raster-grid
+                # buffer around it. This keeps the analysis useful when a user
+                # draws a narrow AOI over a visible WaPOR patch.
+                pixel_size = max(abs(src.transform.a), abs(src.transform.e))
+                buffered = geom.buffer(pixel_size * 2)
+                if not buffered.is_empty:
+                    try:
+                        buf_win = geometry_window(
+                            src, [buffered.__geo_interface__], pad_x=1, pad_y=1
+                        )
+                        buf_arr = src.read(1, window=buf_win)
+                        buf_mask = geometry_mask(
+                            [buffered.__geo_interface__],
+                            out_shape=buf_arr.shape,
+                            transform=src.window_transform(buf_win),
+                            invert=True,
+                            all_touched=True,
+                        )
+                        valid = buf_mask & np.isfinite(buf_arr)
+                        if nodata is not None:
+                            valid &= buf_arr != nodata
+                        if valid.any():
+                            a = buf_arr
+                    except WindowError:
+                        pass
+            if not valid.any():
+                # Final fallback: sample a small square around the polygon
+                # centroid and expand a few times. This handles tiny AOIs drawn
+                # between valid raster cells while still staying spatially local.
+                try:
+                    row, col = src.index(geom.centroid.x, geom.centroid.y)
+                    for radius_px in (3, 8, 16, 32, 64, 128):
+                        row_start = max(0, row - radius_px)
+                        row_stop = min(src.height, row + radius_px + 1)
+                        col_start = max(0, col - radius_px)
+                        col_stop = min(src.width, col + radius_px + 1)
+                        if row_start >= row_stop or col_start >= col_stop:
+                            continue
+                        centroid_win = rasterio.windows.Window(
+                            col_start,
+                            row_start,
+                            col_stop - col_start,
+                            row_stop - row_start,
+                        )
+                        centroid_arr = src.read(1, window=centroid_win)
+                        centroid_valid = np.isfinite(centroid_arr)
+                        if nodata is not None:
+                            centroid_valid &= centroid_arr != nodata
+                        if centroid_valid.any():
+                            a = centroid_arr
+                            valid = centroid_valid
+                            break
+                except Exception:
+                    pass
+            if not valid.any():
+                return None, 0
+            vals = a[valid].astype("float32")
+            return vals, int(vals.size)
+
+    for dekad_key, dekad_date in dekad_items:
+        tif = _WAPOR_LOCAL_ROOT / f"wapor_{dekad_date}.tif"
+        if not tif.exists():
+            continue
+        try:
+            vals, n_pixels = _stats_for_tif(tif)
+            source = "cropland_masked"
+            if vals is None:
+                fallback_candidates = [
+                    (tif.with_suffix(".pre-mask.tif"), "unmasked_pre_mask"),
+                    (tif.with_suffix(".raw.tif"), "unmasked_raw"),
+                    (tif.with_suffix(".chunked-backup.tif"), "unmasked_chunked_backup"),
+                ]
+                for fallback_tif, fallback_source in fallback_candidates:
+                    if not fallback_tif.exists():
+                        continue
+                    vals, n_pixels = _stats_for_tif(fallback_tif)
+                    if vals is not None:
+                        source = fallback_source
+                        break
+            if vals is None:
+                items.append({
+                    "dekad": dekad_key,
+                    "dekad_date": dekad_date,
+                    "mean_eta": None,
+                    "std_eta": None,
+                    "n_pixels": 0,
+                    "message": "No WaPOR pixels inside the selected polygon for this date.",
+                })
+                continue
+            items.append({
+                "dekad": dekad_key,
+                "dekad_date": dekad_date,
+                "mean_eta": round(float(vals.mean()), 2),
+                "std_eta": round(float(vals.std()), 2),
+                "min_eta": round(float(vals.min()), 2),
+                "max_eta": round(float(vals.max()), 2),
+                "n_pixels": n_pixels,
+                "source": source,
+            })
+        except Exception as e:  # noqa: BLE001
+            items.append({
+                "dekad": dekad_key,
+                "dekad_date": dekad_date,
+                "mean_eta": None,
+                "error": str(e),
+            })
+
+    # Sort by dekad_date (chronological)
+    items.sort(key=lambda x: x.get("dekad_date") or "")
+    return JsonResponse({"items": items})
+
+
+# ----------------------------------------------------------------------
 # /api/gee/boundaries-geojson/  -> GAUL polygons with properties
 # GET ?level=1|2|3
 # ----------------------------------------------------------------------
@@ -1493,3 +2129,138 @@ def gee_irrigation_periods(request: HttpRequest) -> JsonResponse:
                 "message": f"Failed to read irrigation IC: {e}",
             }
         )
+
+
+# ----------------------------------------------------------------------
+# /api/gee/wapor-periods/  -> dekad date picker options
+# Frontend rebuilds dataset as "WAPOR_SA_<iso>?<dekad>" on every change.
+# ----------------------------------------------------------------------
+@require_GET
+def gee_wapor_periods(request: HttpRequest) -> JsonResponse:
+    """Return the dekads the viewer can display.
+
+    A dekad is exposed if its mosaic file exists under ``out/wapor/``. Periods
+    are grouped by year-month so the picker can show "July 2025" with D1/D2/D3
+    options inside.
+    """
+    available = []
+    for dekad_key, dekad_date in _WAPOR_DEKAD_TO_DATE.items():
+        tif = _WAPOR_LOCAL_ROOT / f"wapor_{dekad_date}.tif"
+        if not tif.exists():
+            continue
+        iso_period = dekad_date[:7]  # "2025-07"
+        lo, hi = _wapor_rescale_for(tif)
+        available.append({
+            "iso_period": iso_period,
+            "month_label": _WAPOR_PERIOD_LABELS.get(iso_period, iso_period),
+            "dekad": dekad_key,
+            "dekad_date": dekad_date,
+            "vmin": round(lo, 2),
+            "vmax": round(hi, 2),
+        })
+    return JsonResponse({"configured": True, "periods": available})
+
+
+# ----------------------------------------------------------------------
+# /api/wapor/tile/<dekad>/<z>/<x>/<y>.png
+# Serves rio-tiler PNG tiles from the local WaPOR ETa20m mosaic.
+# ----------------------------------------------------------------------
+@require_GET
+def wapor_tile(request: HttpRequest, dekad: str, z: int, x: int, y: int) -> HttpResponse:
+    """Serve one PNG tile for a WaPOR dekad mosaic.
+
+    ``dekad`` is the dekad date as YYYY-MM-DD (e.g. ``2025-07-11``). Values
+    outside the data extent return a transparent PNG so the layer doesn't
+    flash error tiles when the user pans away.
+    """
+    # Whitelist: only allow known dekads.
+    if dekad not in set(_WAPOR_DEKAD_TO_DATE.values()):
+        return HttpResponse(status=404)
+
+    tif = _WAPOR_LOCAL_ROOT / f"wapor_{dekad}.tif"
+    if not tif.exists():
+        return HttpResponse(status=404)
+
+    # Include mosaic mtime in the cache key so the Django locmem cache
+    # invalidates whenever merge_wapor.py overwrites the mosaic.
+    try:
+        mtime = int(tif.stat().st_mtime)
+    except OSError:
+        mtime = 0
+    cache_key = f"iv:wapor_tile:{dekad}:{mtime}:{z}:{x}:{y}"
+    cached = cache.get(cache_key)
+    if cached:
+        return HttpResponse(cached, content_type="image/png")
+
+    try:
+        from rio_tiler.io import Reader
+        from rio_tiler.errors import TileOutsideBounds
+        from rio_tiler.colormap import cmap as rio_cmap
+    except Exception as e:  # noqa: BLE001
+        return HttpResponse(f"rio-tiler not installed: {e}".encode(), status=500)
+
+    try:
+        with Reader(str(tif)) as src:
+            try:
+                img = src.tile(int(x), int(y), int(z))
+            except TileOutsideBounds:
+                return HttpResponse(_TRANSPARENT_PNG, content_type="image/png")
+        png_bytes = _render_quantile_stretched(img, tif)
+    except Exception as e:  # noqa: BLE001
+        import traceback as _tb
+        _tb.print_exc()
+        return HttpResponse(f"tile render error: {e}".encode(), status=500)
+
+    cache.set(cache_key, png_bytes, timeout=24 * 60 * 60)
+    resp = HttpResponse(png_bytes, content_type="image/png")
+    # Short browser cache so renderer changes don't get stuck behind 24-h CDN-
+    # style caching while we iterate on colormaps / rescale. The URL also
+    # carries a ?v=q2-... cache-buster keyed on renderer algorithm.
+    resp["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
+# 1x1 transparent PNG (89 bytes).
+_TRANSPARENT_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def _render_quantile_stretched(img, tif_path: Path) -> bytes:
+    """Render a tile by mapping each pixel to its quantile in the full mosaic.
+
+    This is critical when data clusters tightly (winter ETa: std ~2 mm) — a
+    linear rescale leaves nearly everything in one corner of the colormap.
+    Quantile mapping guarantees colors are evenly distributed across pixels
+    so adjacent fields are visually distinguishable.
+    """
+    import io
+    import numpy as np
+    from PIL import Image
+    import matplotlib
+
+    sorted_vals = _wapor_quantile_lut(tif_path)
+    qs = np.linspace(0.0, 1.0, len(sorted_vals), dtype=np.float32)
+
+    arr = np.asarray(img.array, dtype=np.float32)
+    if arr.ndim == 3:
+        arr = arr[0]
+    mask = np.asarray(img.mask)
+    if mask.ndim == 3:
+        mask = mask[0]
+    valid = mask > 0
+
+    norm = np.zeros(arr.shape, dtype=np.float32)
+    if valid.any():
+        norm_flat = np.interp(arr[valid], sorted_vals, qs)
+        norm[valid] = norm_flat.astype(np.float32)
+
+    cm = matplotlib.colormaps["turbo"]
+    rgba = (cm(norm) * 255).astype(np.uint8)  # H, W, 4
+    rgba[..., 3] = np.where(valid, 255, 0)
+
+    buf = io.BytesIO()
+    Image.fromarray(rgba, "RGBA").save(buf, "PNG", optimize=False)
+    return buf.getvalue()

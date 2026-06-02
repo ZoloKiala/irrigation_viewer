@@ -130,20 +130,9 @@
           features,
         };
 
-        if (features.length) {
-          try {
-            const bbox = turf.bbox(fc);
-            this.map.fitBounds(
-              [
-                [bbox[0], bbox[1]],
-                [bbox[2], bbox[3]],
-              ],
-              { padding: 40, duration: 800 }
-            );
-          } catch (e) {
-            console.warn("Could not compute bbox for socio layer", e);
-          }
-        }
+        // Deliberately do NOT auto-zoom to the layer when it's toggled on —
+        // keep the user's current view. Use the row click or the "zoom"
+        // button in the attribute table to navigate to a feature/layer.
 
         this.ensureAttributePanelVisible();
         this.renderSocioAttributeTable(id, label, features, null);

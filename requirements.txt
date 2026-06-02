@@ -4,6 +4,10 @@ gunicorn
 whitenoise
 psycopg2-binary
 django-environ
+numpy
+rasterio
+rio-tiler
+shapely
+Pillow
 # …plus your other packages…
-
 

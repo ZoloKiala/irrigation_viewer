@@ -249,27 +249,168 @@
         duration: 900,
         maxZoom: 7,
       });
+      // Refresh the status + analysis-panel text so they point at the right
+      // layer for the new country.
+      const msg = country === "South Africa"
+        ? "Map ready. Enable the South Africa irrigation layer to begin."
+        : _t("status_map_ready", "Map ready. Choose a suitability layer to begin.");
+      API.setStatus(msg, false);
+      const html = country === "South Africa"
+        ? "<em>Enable the South Africa irrigation layer, then click a homeland and choose <strong>Irrigated area (ha)</strong> in the popup.</em>"
+        : "<em>Pick a suitability map, then draw a polygon (auto analysis) or click a boundary and use “Run analysis” in the popup.</em>";
+      API.setAnalysisHtml(html);
     };
 
     if (draw) {
-      // Debounce so dragging vertices doesn't spam /gee/analyze with every pixel.
-      let _drawAnalyzeTimer = null;
-      const debouncedRunAnalysis = () => {
-        if (_drawAnalyzeTimer) clearTimeout(_drawAnalyzeTimer);
-        _drawAnalyzeTimer = setTimeout(() => {
-          _drawAnalyzeTimer = null;
-          analysisManager.runFreehandAnalysis();
-        }, 400);
-      };
-      map.on("draw.create", debouncedRunAnalysis);
-      map.on("draw.update", debouncedRunAnalysis);
-      map.on("draw.delete", () => {
-        if (_drawAnalyzeTimer) {
-          clearTimeout(_drawAnalyzeTimer);
-          _drawAnalyzeTimer = null;
+      let _drawPopup = null;
+      const _closeDrawPopup = () => {
+        if (_drawPopup) {
+          try { _drawPopup.remove(); } catch (_) {}
+          _drawPopup = null;
         }
+      };
+
+      // After a popup is closed (e.g. user clicked X), the next map click
+      // immediately after may land on the now-exposed canvas inside the
+      // drawn polygon and re-open the popup. This flag suppresses that.
+      let _suppressMapClickUntil = 0;
+      const _suppressMapClickBriefly = () => {
+        _suppressMapClickUntil = Date.now() + 350;
+      };
+
+      const _validPos = (p) =>
+        p && Number.isFinite(p.lng) && Number.isFinite(p.lat);
+
+      const _showPopupForFeature = (feature, lngLat) => {
+        if (!feature || !feature.geometry) return;
+        let pos = _validPos(lngLat) ? lngLat : null;
+        // Try turf centroid first.
+        if (!pos && typeof turf !== "undefined") {
+          try {
+            const c = turf.centroid(feature).geometry.coordinates;
+            const cand = { lng: c[0], lat: c[1] };
+            if (_validPos(cand)) pos = cand;
+          } catch (_) { /* fall through */ }
+        }
+        // Fallback: first vertex of the (Multi)Polygon outer ring.
+        if (!pos) {
+          try {
+            const g = feature.geometry;
+            let ring;
+            if (g.type === "Polygon") ring = g.coordinates[0];
+            else if (g.type === "MultiPolygon") ring = g.coordinates[0][0];
+            const v = ring && ring[0];
+            const cand = v ? { lng: v[0], lat: v[1] } : null;
+            if (_validPos(cand)) pos = cand;
+          } catch (_) { /* fall through */ }
+        }
+        if (!_validPos(pos)) {
+          console.warn("[draw popup] could not derive a valid lng/lat from feature", feature);
+          return;
+        }
+        _closeDrawPopup();
+        _drawPopup = API.showDrawPolygonPopup(pos, feature, analysisManager);
+        if (_drawPopup && typeof _drawPopup.on === "function") {
+          _drawPopup.on("close", () => {
+            _drawPopup = null;
+            _suppressMapClickBriefly();
+          });
+        }
+      };
+
+      // Auto-show the analysis popup right after the polygon is finalized.
+      // Also force MapboxDraw out of draw_polygon mode so subsequent clicks
+      // don't start a new polygon, AND sync the toolbar UI + status text so
+      // the user can tell the drawing operation is finished.
+      const _resetDrawToolbarUi = () => {
+        try { draw.changeMode("simple_select"); } catch (_) {}
+        const toolbar = document.getElementById("drawToolbar")
+          || document.querySelector(".draw-toolbar");
+        if (toolbar) {
+          toolbar.querySelectorAll("button[data-mode]").forEach((b) => {
+            b.classList.toggle("active", b.dataset.mode === "select");
+          });
+        }
+        API.setStatus("Polygon ready. Use the popup to run analysis.", false);
+      };
+
+      // Maximum drawn-polygon size. Analyses run server-side on Earth Engine
+      // and are slow for huge areas (and the EE project is compute-limited);
+      // a country-scale draw is almost never intentional. ~5,000 km².
+      const MAX_DRAW_AREA_HA = 500000;
+      const _enforceDrawSizeLimit = (feature) => {
+        if (!feature || typeof turf === "undefined" || !turf.area) return true;
+        let areaHa = 0;
+        try { areaHa = turf.area(feature) / 10000; } catch (_) { return true; }
+        if (areaHa <= MAX_DRAW_AREA_HA) return true;
+        // Too big — remove the polygon and tell the user.
+        try {
+          if (feature.id != null) draw.delete(feature.id);
+          else draw.deleteAll();
+        } catch (_) {}
+        _closeDrawPopup();
+        if (analysisManager && typeof analysisManager.resetForDrawDelete === "function") {
+          analysisManager.resetForDrawDelete();
+        }
+        API.setStatus(
+          `Polygon too large (${Math.round(areaHa).toLocaleString()} ha). `
+          + `Maximum is ${MAX_DRAW_AREA_HA.toLocaleString()} ha — draw a smaller area.`,
+          true
+        );
+        return false;
+      };
+
+      map.on("draw.create", (e) => {
+        console.log("[draw.create] features:", e && e.features);
+        _resetDrawToolbarUi();
+        const f = e && e.features && e.features[0];
+        if (!_enforceDrawSizeLimit(f)) return;
+        _showPopupForFeature(f, null);
+      });
+
+      // Enter key OR right-click finishes an in-progress polygon. mapbox-
+      // gl-draw 1.5 + MapLibre sometimes drops the dblclick that's supposed
+      // to finalize the polygon, leaving the user stuck adding vertices.
+      const _finishInProgressPolygon = () => {
+        let mode;
+        try { mode = draw.getMode(); } catch (_) { return false; }
+        if (mode !== "draw_polygon") return false;
+        // changeMode commits the polygon (if valid) and fires draw.create.
+        // The draw.create handler handles toolbar reset + popup, so don't do
+        // it here too or we'd end up with two popups on screen.
+        try { draw.changeMode("simple_select"); } catch (_) { return false; }
+        return true;
+      };
+
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" || !draw) return;
+        if (_finishInProgressPolygon()) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+      });
+
+      map.on("contextmenu", () => {
+        // Right-click also finishes the polygon — matches several GIS tools.
+        _finishInProgressPolygon();
+      });
+
+      map.on("draw.update", (e) => {
+        const f = e && e.features && e.features[0];
+        if (!_enforceDrawSizeLimit(f)) return;
+        _showPopupForFeature(f, null);
+      });
+
+      map.on("draw.delete", () => {
+        _closeDrawPopup();
         analysisManager.resetForDrawDelete();
       });
+
+      // (Removed: click-inside-polygon-to-reopen-popup. It conflicted with the
+      // popup close button — clicking X often reopened the popup because the
+      // click reached the canvas under the polygon. The popup now opens only
+      // on draw.create / draw.update. To run a new analysis, redraw or use
+      // the Clear button.)
     }
 
     map.on("error", (e) => {
@@ -298,9 +439,29 @@
     });
 
     map.on("load", () => {
-      API.setStatus(_t("status_map_ready", "Map ready. Choose a suitability layer to begin."), false);
+      const country = (typeof API.getCurrentCountry === "function")
+        ? API.getCurrentCountry()
+        : "Zimbabwe";
+      const readyMsg = country === "South Africa"
+        ? "Map ready. Enable the South Africa irrigation layer to begin."
+        : _t("status_map_ready", "Map ready. Choose a suitability layer to begin.");
+      API.setStatus(readyMsg, false);
 
       API.addBasemapLayers();
+
+      // Hard guarantee: basemap rasters always render at full opacity.
+      // Re-pin after the initial add and after every style mutation so
+      // nothing (legacy code, browser extensions, third-party libs) can
+      // dim the basemap while the per-layer overlay sliders are in use.
+      if (typeof API.restoreBasemapOpacity === "function") {
+        API.restoreBasemapOpacity();
+        map.on("styledata", () => API.restoreBasemapOpacity());
+        map.on("sourcedata", (e) => {
+          if (e && e.sourceId && e.sourceId.startsWith("basemap")) {
+            API.restoreBasemapOpacity();
+          }
+        });
+      }
 
       map.addSource(API.H_SRC, {
         type: "geojson",
@@ -340,9 +501,13 @@
     API.attachBasemapSwitcher();
     API.wireTopNavAndCountry(analysisManager);
 
-    API.setAnalysisHtml(
-      "<em>Pick a suitability map, then draw a polygon (auto analysis) or click a boundary and use “Run analysis” in the popup.</em>"
-    );
+    const country2 = (typeof API.getCurrentCountry === "function")
+      ? API.getCurrentCountry()
+      : "Zimbabwe";
+    const initAnalysisHtml = country2 === "South Africa"
+      ? "<em>Enable the South Africa irrigation layer, then click a homeland and choose <strong>Irrigated area (ha)</strong> in the popup.</em>"
+      : "<em>Pick a suitability map, then draw a polygon (auto analysis) or click a boundary and use “Run analysis” in the popup.</em>";
+    API.setAnalysisHtml(initAnalysisHtml);
   }
 
   document.addEventListener("DOMContentLoaded", () => {

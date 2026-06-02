@@ -193,6 +193,21 @@
 
     // ----------------- Freehand poly analysis (soil suitability) -----------------
     async runFreehandAnalysis() {
+      // If a WaPOR layer is active, drawing a polygon should run the WaPOR
+      // time-series analysis instead of suitability.
+      const waporCb = Array.from(
+        document.querySelectorAll('input[name="layer"][type="checkbox"]:checked')
+      ).find((cb) => (cb.value || "").startsWith("WAPOR_SA_"));
+      if (waporCb) {
+        const fc = this.draw && this.draw.getAll ? this.draw.getAll() : null;
+        if (!fc || !fc.features || !fc.features.length) {
+          this.setStatus(_t("status_draw_polygon_first", "Draw a polygon first."), true);
+          return;
+        }
+        const geom = fc.features[fc.features.length - 1].geometry;
+        return this.runFreehandWaporTimeseries(geom);
+      }
+
       if (!this.currentSuitability) {
         this.setStatus(_t("status_select_suit", "Select a suitability map first."), true);
         return;
@@ -402,6 +417,338 @@
       } catch (err) {
         console.error("Boundary analysis failed", err);
         this.setStatus(_t("status_boundary_analysis_failed", "Boundary analysis failed."), true);
+      }
+    }
+
+    // ----------------- Boundary-based irrigation-area analysis -----------------
+    /**
+     * Sum irrigated hectares inside a boundary using the currently-enabled
+     * irrigation layer (raw / filtered / probability). Resolves the active
+     * layer by scanning the layer checkboxes for the IRR_SA_<iso>?<band>
+     * pattern, so the user controls period/band via the existing date picker.
+     */
+    async runBoundaryIrrigationAnalysis(feature, label) {
+      if (!feature || !feature.geometry) {
+        this.setStatus(_t("status_click_boundary_first", "Click a boundary polygon first."), true);
+        return;
+      }
+
+      const checked = Array.from(
+        document.querySelectorAll('input[name="layer"][type="checkbox"]:checked')
+      );
+      const irrCb = checked.find(
+        (cb) => (cb.value || "").startsWith("IRR_SA_")
+      );
+      if (!irrCb) {
+        this.setStatus(
+          "Enable a South Africa irrigation layer (monthly) first.",
+          true
+        );
+        this.setAnalysisHtml(
+          "<em>Enable the 'South Africa — Irrigation (monthly)' layer, pick a period and band, then click 'Run analysis'.</em>"
+        );
+        return;
+      }
+
+      const m = (irrCb.value || "").match(/^IRR_SA_([^?]+)\?(.+)$/);
+      if (!m) {
+        this.setStatus("Could not parse irrigation layer selection.", true);
+        return;
+      }
+      const isoPeriod = m[1];
+      const band = m[2];
+      const name = label || (feature.properties && (feature.properties.name || feature.properties.NAME)) || "Boundary";
+
+      try {
+        this.setStatus(_t("status_running_boundary_analysis", "Running boundary analysis…"), false);
+        const resp = await fetch("/api/gee/analyze-irrigation/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            geometry: feature.geometry,
+            iso_period: isoPeriod,
+            band,
+          }),
+        });
+        if (!resp.ok) {
+          this.setStatus(`Irrigation analysis failed (${resp.status})`, true);
+          return;
+        }
+        const data = await resp.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length) {
+          this.setAnalysisHtml(`<em>${data.message || "No data."}</em>`);
+          return;
+        }
+        this.renderIrrigationAnalysis(name, items, {
+          iso_period: data.iso_period || isoPeriod,
+          band: data.band || band,
+          threshold: data.threshold,
+        });
+        this.setStatus(_t("status_boundary_analysis_complete", "Boundary analysis complete."), false);
+      } catch (err) {
+        console.error("Boundary irrigation analysis failed", err);
+        this.setStatus("Irrigation analysis failed.", true);
+      }
+    }
+
+    renderIrrigationAnalysis(label, items, meta) {
+      const fmt = (n) => (Number(n) || 0).toLocaleString(undefined, {
+        maximumFractionDigits: 1,
+      });
+      const rows = items
+        .map((it) => {
+          const pct = Number(it.share_pct) || 0;
+          return `
+            <tr>
+              <td>${it.label}</td>
+              <td class="text-end">${fmt(it.area_ha)}</td>
+              <td class="text-end">${pct.toFixed(1)}%</td>
+            </tr>
+          `;
+        })
+        .join("");
+      const thr = meta && meta.threshold != null
+        ? ` · threshold ${Number(meta.threshold).toFixed(2)}`
+        : "";
+      const sub = meta
+        ? `<div class="small text-secondary mb-2">Period ${meta.iso_period} · band ${meta.band}${thr}</div>`
+        : "";
+      this.setAnalysisHtml(`
+        <div class="mb-1 fw-semibold">Irrigated area — ${label}</div>
+        ${sub}
+        <div class="table-responsive">
+          <table class="table table-sm table-dark table-striped align-middle mb-2">
+            <thead>
+              <tr>
+                <th>Class</th>
+                <th class="text-end">Area&nbsp;(ha)</th>
+                <th class="text-end">Share</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `);
+      const box = document.getElementById("analysisBox");
+      if (box && box.scrollIntoView) {
+        box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+
+    // ----------------- Freehand WaPOR time-series analysis -----------------
+    async runFreehandWaporTimeseries(geom, opts = {}) {
+      try {
+        this.setStatus("Running WaPOR time-series on drawn polygon…", false);
+        const resp = await fetch("/api/wapor/timeseries/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            geometry: geom,
+            dekad_date: opts.dekad_date || null,
+            start_date: opts.start_date || null,
+            end_date: opts.end_date || null,
+          }),
+        });
+        if (!resp.ok) {
+          this.setStatus(`WaPOR time series failed (${resp.status})`, true);
+          return;
+        }
+        const data = await resp.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length || items.every((it) => !it.n_pixels)) {
+          this.setAnalysisHtml(
+            `<em>${data.message || "No WaPOR pixels inside the drawn polygon for the selected date."}</em>`
+          );
+          this.setStatus("No WaPOR pixels inside polygon.", true);
+          return;
+        }
+        this.renderWaporTimeseries("Drawn polygon", items);
+        this.setStatus("WaPOR time-series complete.", false);
+      } catch (err) {
+        console.error("Freehand WaPOR time-series failed", err);
+        this.setStatus("WaPOR time series failed.", true);
+      }
+    }
+
+    // ----------------- Boundary-based WaPOR time-series analysis -----------------
+    /**
+     * Compute mean ETa per dekad inside a boundary across all locally-
+     * available WaPOR mosaics, and render as a small table + inline bars.
+     */
+    async runBoundaryWaporTimeseries(feature, label, opts = {}) {
+      if (!feature || !feature.geometry) {
+        this.setStatus(_t("status_click_boundary_first", "Click a boundary polygon first."), true);
+        return;
+      }
+      const name = label || (feature.properties && (feature.properties.name || feature.properties.NAME)) || "Boundary";
+      try {
+        this.setStatus("Running WaPOR time-series analysis…", false);
+        const resp = await fetch("/api/wapor/timeseries/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            geometry: feature.geometry,
+            dekad_date: opts.dekad_date || null,
+            start_date: opts.start_date || null,
+            end_date: opts.end_date || null,
+          }),
+        });
+        if (!resp.ok) {
+          this.setStatus(`WaPOR time series failed (${resp.status})`, true);
+          return;
+        }
+        const data = await resp.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length || items.every((it) => !it.n_pixels)) {
+          this.setAnalysisHtml(`<em>${data.message || "No WaPOR mosaics available."}</em>`);
+          this.setStatus("No WaPOR pixels inside polygon.", true);
+          return;
+        }
+        this.renderWaporTimeseries(name, items);
+        this.setStatus("WaPOR time-series complete.", false);
+      } catch (err) {
+        console.error("Boundary WaPOR time-series failed", err);
+        this.setStatus("WaPOR time series failed.", true);
+      }
+    }
+
+    renderWaporTimeseries(label, items) {
+      const fmt = (n) => (n == null ? "—" : Number(n).toFixed(2));
+      // Sort items chronologically by dekad_date so multi-year inputs render
+      // left-to-right in time order regardless of backend ordering.
+      const valid = items
+        .filter((it) => Number.isFinite(it.mean_eta))
+        .slice()
+        .sort((a, b) => (a.dekad_date || "").localeCompare(b.dekad_date || ""));
+
+      // Chart geometry — grow taller when there are lots of points so the
+      // rotated date labels along the x-axis stay readable.
+      const W = 380;
+      const H = valid.length > 12 ? 220 : 180;
+      const m = { top: 16, right: 16, bottom: 50, left: 40 };
+      const innerW = W - m.left - m.right;
+      const innerH = H - m.top - m.bottom;
+
+      let svg = "";
+      if (valid.length >= 1) {
+        const stds = valid.map((it) => Number.isFinite(it.std_eta) ? it.std_eta : 0);
+        const meansLo = valid.map((it, i) => it.mean_eta - stds[i]);
+        const meansHi = valid.map((it, i) => it.mean_eta + stds[i]);
+        const dataMin = Math.min(...meansLo);
+        const dataMax = Math.max(...meansHi);
+        const pad = Math.max(0.5, (dataMax - dataMin) * 0.1);
+        const yMin = dataMin - pad;
+        const yMax = dataMax + pad;
+        const yRange = yMax - yMin || 1;
+
+        const xAt = (i) =>
+          m.left + (valid.length === 1
+            ? innerW / 2
+            : (innerW * i) / (valid.length - 1));
+        const yAt = (v) => m.top + innerH - (innerH * (v - yMin)) / yRange;
+
+        // Y-axis tick lines (3 ticks)
+        const yTicks = [yMin, (yMin + yMax) / 2, yMax];
+        const gridLines = yTicks
+          .map(
+            (v) => `
+              <line x1="${m.left}" x2="${W - m.right}"
+                    y1="${yAt(v)}" y2="${yAt(v)}"
+                    stroke="rgba(148,163,184,.2)" stroke-width="1"/>
+              <text x="${m.left - 6}" y="${yAt(v) + 3}"
+                    text-anchor="end" font-size="10" fill="#94a3b8">
+                ${v.toFixed(1)}
+              </text>
+            `
+          )
+          .join("");
+
+        // Error bars
+        const errBars = valid
+          .map((it, i) => {
+            const std = stds[i];
+            if (!std) return "";
+            const x = xAt(i);
+            return `
+              <line x1="${x}" x2="${x}"
+                    y1="${yAt(it.mean_eta - std)}" y2="${yAt(it.mean_eta + std)}"
+                    stroke="#94a3b8" stroke-width="1.5"/>
+              <line x1="${x - 3}" x2="${x + 3}" y1="${yAt(it.mean_eta - std)}" y2="${yAt(it.mean_eta - std)}" stroke="#94a3b8" stroke-width="1.5"/>
+              <line x1="${x - 3}" x2="${x + 3}" y1="${yAt(it.mean_eta + std)}" y2="${yAt(it.mean_eta + std)}" stroke="#94a3b8" stroke-width="1.5"/>
+            `;
+          })
+          .join("");
+
+        // Connected mean line
+        const linePath = valid.length === 1
+          ? ""
+          : `<path d="${valid.map((it, i) => `${i === 0 ? "M" : "L"} ${xAt(i)} ${yAt(it.mean_eta)}`).join(" ")}"
+                  stroke="#22d3ee" stroke-width="2" fill="none"/>`;
+
+        // Markers with tooltip
+        const markers = valid
+          .map(
+            (it, i) => `
+              <circle cx="${xAt(i)}" cy="${yAt(it.mean_eta)}" r="4"
+                      fill="#22d3ee" stroke="#0f172a" stroke-width="1.5">
+                <title>${it.dekad_date || it.dekad}: ${fmt(it.mean_eta)} ± ${fmt(it.std_eta)} mm</title>
+              </circle>
+            `
+          )
+          .join("");
+
+        // X-axis labels: full YYYY-MM-DD when sparse, year-tick-only when
+        // dense. Rotated 45° so multi-year ranges don't overlap.
+        const maxLabels = 8;
+        const stride = Math.max(1, Math.ceil(valid.length / maxLabels));
+        const xLabels = valid
+          .map((it, i) => {
+            if (i % stride !== 0 && i !== valid.length - 1) return "";
+            const d = it.dekad_date || "";
+            return `
+              <text x="${xAt(i)}" y="${H - m.bottom + 14}"
+                    text-anchor="end" font-size="10" fill="#94a3b8"
+                    transform="rotate(-45 ${xAt(i)} ${H - m.bottom + 14})">
+                ${d}
+              </text>
+            `;
+          })
+          .join("");
+
+        const xAxis = `
+          <line x1="${m.left}" x2="${W - m.right}"
+                y1="${H - m.bottom}" y2="${H - m.bottom}"
+                stroke="#475569" stroke-width="1"/>
+        `;
+
+        svg = `
+          <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}"
+               preserveAspectRatio="xMidYMid meet" class="wapor-ts-chart">
+            ${gridLines}
+            ${xAxis}
+            ${errBars}
+            ${linePath}
+            ${markers}
+            ${xLabels}
+            <text x="${m.left}" y="12" font-size="10" fill="#94a3b8">mm / dekad</text>
+          </svg>
+        `;
+      } else {
+        svg = '<div class="small text-secondary">No valid dekads.</div>';
+      }
+
+      this.setAnalysisHtml(`
+        <div class="mb-1 fw-semibold">Crop water use — ${label}</div>
+        <div class="small text-secondary mb-2">
+          Mean WaPOR L1 AETI_D (mm / dekad) · ${valid.length} dekad${valid.length === 1 ? "" : "s"}
+        </div>
+        ${svg}
+      `);
+
+      const box = document.getElementById("analysisBox");
+      if (box && box.scrollIntoView) {
+        box.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     }
 

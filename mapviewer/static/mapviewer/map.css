@@ -758,6 +758,21 @@ html[data-iv-mood="paper"] .navbar-partner-logo {
   margin-bottom: .25rem;
 }
 
+/* Stack multiple legends with a thin divider so users can read both
+   irrigation + WaPOR at the same time. */
+.legend-section + .legend-section{
+  margin-top: .5rem;
+  padding-top: .5rem;
+  border-top: 1px solid rgba(148, 163, 184, .25);
+}
+
+/* Inline trend bar for WaPOR time-series rows in the analysis table */
+.wapor-bar{
+  height: 10px;
+  background: linear-gradient(to right, #30123b, #21918c, #fde725);
+  border-radius: 3px;
+}
+
 .legend-item{
   display: flex;
   align-items: center;
@@ -771,6 +786,37 @@ html[data-iv-mood="paper"] .navbar-partner-logo {
   border-radius: 3px;
   border: 1px solid rgba(15,23,42,.8);
   flex-shrink: 0;
+}
+
+/* Continuous-range legend (probability band) */
+.legend-gradient{
+  width: 160px;            /* fixed: parent #legend is sized to content */
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(15,23,42,.8);
+  margin: 4px 0 2px;
+}
+.legend-gradient--prob{
+  background: linear-gradient(to right, #ffffff, #00ffff, #0000fa);
+}
+.legend-gradient--wapor{
+  /* Approximation of matplotlib turbo (blue -> cyan -> green -> yellow -> red) */
+  background: linear-gradient(to right,
+    #30123b, #4145ab, #4675ed, #39a2fc, #1bcfd4,
+    #24eca6, #61fc6c, #a4fc3b, #d1e834, #f3c63a,
+    #fe9b2d, #f36315, #d93806, #b11901, #7a0403);
+}
+.legend-gradient-axis{
+  width: 160px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: .8;
+}
+.legend-foot{
+  font-size: 11px;
+  opacity: .65;
+  margin-top: 4px;
 }
 
 /* ===================== ATTRIBUTE PANEL ===================== */
@@ -1057,7 +1103,11 @@ html[data-iv-mood="paper"] .navbar-partner-logo {
   color: #e5e7eb;              /* light text */
   border-radius: 0.75rem;
   padding: 0.6rem 0.85rem;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.6);
+  /* Subtle drop-shadow; the previous 40 px / 0.6-alpha shadow rendered as a
+     visible black blob on the map. Pair a thin border with a small shadow
+     for crisp definition without the dark halo. */
+  border: 1px solid rgba(148, 163, 184, .25);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   font-size: 0.8rem;
 }
 
@@ -1066,10 +1116,37 @@ html[data-iv-mood="paper"] .navbar-partner-logo {
   color: #f9fafb;
 }
 
+/* The CSS triangle that points at the popup's anchor. The previous rule set
+   both top + bottom border colors which rendered an ugly black "diamond"
+   blob instead of a single triangle. Per-anchor selectors pick exactly the
+   one visible border color and leave the other three transparent. */
 .maplibregl-popup-tip,
 .mapboxgl-popup-tip{
-  border-top-color: #020617 !important;
+  border-color: transparent !important;
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-right .maplibregl-popup-tip,
+.mapboxgl-popup-anchor-top .mapboxgl-popup-tip,
+.mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+.mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip{
   border-bottom-color: #020617 !important;
+}
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip,
+.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip,
+.mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+.mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip{
+  border-top-color: #020617 !important;
+}
+.maplibregl-popup-anchor-left .maplibregl-popup-tip,
+.mapboxgl-popup-anchor-left .mapboxgl-popup-tip{
+  border-right-color: #020617 !important;
+}
+.maplibregl-popup-anchor-right .maplibregl-popup-tip,
+.mapboxgl-popup-anchor-right .mapboxgl-popup-tip{
+  border-left-color: #020617 !important;
 }
 
 /* Links inside popup */
