@@ -1,4 +1,4 @@
-{% load static %}
+{% load static %}{% now "U" as cachebust %}
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
   <head>
@@ -30,7 +30,7 @@
     <!-- Design tokens (colors & type) — must load before map.css -->
     <link rel="stylesheet" href="{% static 'mapviewer/colors_and_type.css' %}"/>
     <!-- App CSS (merged styles) -->
-    <link rel="stylesheet" href="{% static 'mapviewer/map.css' %}"/>
+    <link rel="stylesheet" href="{% static 'mapviewer/map.css' %}?v={{ cachebust }}"/>
 
     <style>
       body[data-country="Zimbabwe"] .layer-leaf[data-country="South Africa"],
@@ -272,14 +272,25 @@
                               <option value="" data-i18n="picker_loading">Loading…</option>
                             </select>
                           </label>
-                          <label class="layer-picker-row">
-                            <span class="layer-picker-lbl" data-i18n="picker_band">Band</span>
-                            <select class="layer-picker-band">
-                              <option value="filtered" data-i18n="picker_band_filtered">Filtered</option>
-                              <option value="raw"      data-i18n="picker_band_raw">Raw</option>
-                              <option value="probability" data-i18n="picker_band_probability">Probability</option>
-                            </select>
-                          </label>
+                          {% if layer.ic_kind == "wapor" %}
+                            <label class="layer-picker-row">
+                              <span class="layer-picker-lbl">Dekad</span>
+                              <select class="layer-picker-band">
+                                <option value="D1">D1 (1–10)</option>
+                                <option value="D2" selected>D2 (11–20)</option>
+                                <option value="D3">D3 (21–31)</option>
+                              </select>
+                            </label>
+                          {% else %}
+                            <label class="layer-picker-row">
+                              <span class="layer-picker-lbl" data-i18n="picker_band">Band</span>
+                              <select class="layer-picker-band">
+                                <option value="filtered" data-i18n="picker_band_filtered">Filtered</option>
+                                <option value="raw"      data-i18n="picker_band_raw">Raw</option>
+                                <option value="probability" data-i18n="picker_band_probability">Probability</option>
+                              </select>
+                            </label>
+                          {% endif %}
                         </div>
                       </div>
                     {% endif %}
@@ -473,10 +484,17 @@
             <button type="button"
                     class="btn btn-dark btn-sm"
                     data-mode="polygon"
-                    title="Draw polygon"
+                    title="Draw polygon (click vertices, then click Finish or press Enter)"
                     aria-label="Draw polygon"
                     aria-pressed="false">
               <i class="bi bi-pentagon-fill" aria-hidden="true"></i>
+            </button>
+            <button type="button"
+                    class="btn btn-success btn-sm"
+                    data-mode="finish"
+                    title="Finish drawing the polygon"
+                    aria-label="Finish polygon">
+              <i class="bi bi-check2" aria-hidden="true"></i>
             </button>
             <button type="button"
                     class="btn btn-dark btn-sm"
@@ -899,14 +917,14 @@
         geeSocioGeoJSON: "/api/gee/socio-geojson/"
       };
     </script>
-    <script src="{% static 'mapviewer/map-core.js' %}"></script>
-    <script src="{% static 'mapviewer/analysis-manager.js' %}"></script>
-    <script src="{% static 'mapviewer/boundary-manager.js' %}"></script>
+    <script src="{% static 'mapviewer/map-core.js' %}?v={{ cachebust }}"></script>
+    <script src="{% static 'mapviewer/analysis-manager.js' %}?v={{ cachebust }}"></script>
+    <script src="{% static 'mapviewer/boundary-manager.js' %}?v={{ cachebust }}"></script>
     <script src="{% static 'mapviewer/socio-manager.js' %}"></script>
-    <script src="{% static 'mapviewer/map-init.js' %}"></script>
+    <script src="{% static 'mapviewer/map-init.js' %}?v={{ cachebust }}"></script>
 
     <!-- UI / layout JS (moved from inline) -->
-    <script src="{% static 'mapviewer/ui.js' %}"></script>
+    <script src="{% static 'mapviewer/ui.js' %}?v={{ cachebust }}"></script>
 
   </body>
 </html>

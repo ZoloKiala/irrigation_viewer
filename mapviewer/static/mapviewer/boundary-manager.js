@@ -34,55 +34,257 @@
       // text when the user switches languages.
       this._activePopup = null;
       this._activePopupCtx = null;
+      this._waporPopupPeriodsPromise = null;
 
       document.addEventListener("iv:languagechange", () => {
         if (!this._activePopup || !this._activePopupCtx) return;
         const { feature, name } = this._activePopupCtx;
-        this._activePopup.setHTML(this._buildBoundaryPopupHtml(name));
+        this._activePopup.setHTML(this._buildBoundaryPopupHtml(name, feature));
         // setHTML replaces the inner DOM, so click handlers must be re-bound.
         this._attachBoundaryPopupHandlers(this._activePopup, feature, name);
       });
     }
 
-    _buildBoundaryPopupHtml(name) {
+    _buildBoundaryPopupHtml(name, feature) {
       const _t = (k, fb) =>
         (typeof window.ivT === "function" ? window.ivT(k, fb) : fb);
+
+      // Selected polygon's area, computed instantly client-side from the full
+      // (unclipped) geometry with turf (geodesic on WGS84). No EE round-trip.
+      let areaHtml = "";
+      if (feature && feature.geometry && typeof turf !== "undefined" && turf.area) {
+        try {
+          const ha = turf.area(feature) / 10000;
+          const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+          areaHtml =
+            `<div class="text-secondary small mb-2">Area: ${fmt(ha / 100)} km²`
+            + ` (${fmt(ha)} ha)</div>`;
+        } catch (_) {}
+      }
+
+      const country =
+        (window.MAPVIEWER && typeof window.MAPVIEWER.getCurrentCountry === "function")
+          ? window.MAPVIEWER.getCurrentCountry()
+          : "Zimbabwe";
+
+      // South Africa only has the irrigation IC + WaPOR wired up; the
+      // soil/socio suitability flows aren't configured for SA, so hide them.
+      const options = country === "South Africa"
+        ? `<option value="irrigation" selected>${_t("popup_analysis_type_irrigation", "Irrigated area (ha)")}</option>
+           <option value="wapor_ts">${_t("popup_analysis_type_wapor_ts", "Crop water use (time series)")}</option>`
+        : `<option value="soil" selected>${_t("popup_analysis_type_soil", "Irrigation suitability (area)")}</option>
+           <option value="socio">${_t("popup_analysis_type_socio", "Irrigation Investment suitability")}</option>`;
+
+      // Auto-loaded "irrigated area" quick stats. The handler below fills
+      // this div by calling /api/gee/analyze-irrigation/ when the popup
+      // opens (SA only).
+      const quickStats = country === "South Africa"
+        ? `<div class="popup-irrigation-stats mt-2 mb-2 p-2 rounded"
+                 style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);">
+             <div class="text-secondary small">Loading irrigated area…</div>
+           </div>`
+        : "";
+
       return `
         <div class="small popup-body">
           <div class="fw-semibold mb-1">${name}</div>
+          ${areaHtml}
           <div class="mb-2">
             Use the attribute panel to explore full attributes.
           </div>
+          ${quickStats}
           <div class="mt-1">
             <label class="form-label form-label-sm mb-1">Analysis type</label>
             <div class="d-flex align-items-center gap-2">
               <select id="boundaryAnalysisTypeSelect"
                       class="form-select form-select-sm">
-                <option value="soil" selected>${_t("popup_analysis_type_soil", "Irrigation suitability (area)")}</option>
-                <option value="socio">${_t("popup_analysis_type_socio", "Irrigation Investment suitability")}</option>
+                ${options}
               </select>
               <button id="boundaryAnalyzeBtn" type="button"
                       class="btn btn-primary btn-sm">
                 ${_t("popup_run_analysis", "Run analysis")}
               </button>
             </div>
+            <div class="wapor-boundary-picker mt-2 d-none">
+              <label class="form-label form-label-sm mb-1">Start date</label>
+              <input type="date" class="form-control form-control-sm mb-2 wapor-popup-start-date" disabled />
+              <label class="form-label form-label-sm mb-1">End date</label>
+              <input type="date" class="form-control form-control-sm wapor-popup-end-date" disabled />
+            </div>
           </div>
         </div>
       `;
     }
 
+    _fetchWaporPopupPeriods() {
+      if (!this._waporPopupPeriodsPromise) {
+        this._waporPopupPeriodsPromise = fetch("/api/gee/wapor-periods/")
+          .then((r) => r.json())
+          .then((d) => Array.isArray(d.periods) ? d.periods : [])
+          .catch(() => []);
+      }
+      return this._waporPopupPeriodsPromise;
+    }
+
+    _toggleWaporPopupPicker(root) {
+      const mode = root.querySelector("#boundaryAnalysisTypeSelect")?.value || "";
+      const picker = root.querySelector(".wapor-boundary-picker");
+      if (picker) picker.classList.toggle("d-none", mode !== "wapor_ts");
+    }
+
+    async _populateWaporPopupPicker(root) {
+      const startEl = root.querySelector(".wapor-popup-start-date");
+      const endEl = root.querySelector(".wapor-popup-end-date");
+      if (!startEl || !endEl || root.__waporPickerLoaded) return;
+      const periods = await this._fetchWaporPopupPeriods();
+      if (!periods.length) {
+        [startEl, endEl].forEach((el) => {
+          el.value = "";
+          el.removeAttribute("min");
+          el.removeAttribute("max");
+          el.disabled = true;
+        });
+        root.__waporPickerLoaded = true;
+        return;
+      }
+      const availableDates = periods.map((p) => p.dekad_date).filter(Boolean).sort();
+      [startEl, endEl].forEach((el) => {
+        el.min = availableDates[0] || "";
+        el.max = availableDates[availableDates.length - 1] || "";
+        el.dataset.availableDates = availableDates.join(",");
+        el.disabled = false;
+      });
+      startEl.value = availableDates[0] || "";
+      endEl.value = availableDates[availableDates.length - 1] || "";
+      root.__waporPickerLoaded = true;
+    }
+
+    _selectedWaporPopupDateRange(root) {
+      return {
+        start_date: root.querySelector(".wapor-popup-start-date")?.value || "",
+        end_date: root.querySelector(".wapor-popup-end-date")?.value || "",
+      };
+    }
+
+    _isAvailableWaporPopupDate(root, value) {
+      const raw = root.querySelector(".wapor-popup-start-date")?.dataset.availableDates || "";
+      const dates = raw.split(",").filter(Boolean);
+      return !dates.length || dates.includes(value);
+    }
+
     _attachBoundaryPopupHandlers(popup, feature, name) {
       setTimeout(() => {
-        const btn = document.getElementById("boundaryAnalyzeBtn");
-        const select = document.getElementById("boundaryAnalysisTypeSelect");
+        // Scope to THIS popup's DOM (not a global getElementById, which would
+        // grab another popup's controls and leave this one's "Loading…" stuck).
+        const root = popup && typeof popup.getElement === "function"
+          ? popup.getElement()
+          : null;
+        const btn = root
+          ? root.querySelector("#boundaryAnalyzeBtn")
+          : document.getElementById("boundaryAnalyzeBtn");
+        const select = root ? root.querySelector("#boundaryAnalysisTypeSelect") : null;
         if (!btn) return;
+        if (select && root) {
+          const syncPicker = () => {
+            this._toggleWaporPopupPicker(root);
+            if ((select.value || "") === "wapor_ts") {
+              this._populateWaporPopupPicker(root);
+            }
+          };
+          select.addEventListener("change", syncPicker);
+          syncPicker();
+        }
+
+        // Auto-load irrigated area stats in the popup (South Africa only).
+        // Picks iso_period/band from a checked IRR_SA_ layer if any, else
+        // falls back to the current default (2025-07, filtered).
+        const statsEl = root ? root.querySelector(".popup-irrigation-stats") : null;
+        if (statsEl && feature && feature.geometry) {
+          const checked = Array.from(
+            document.querySelectorAll('input[name="layer"][type="checkbox"]:checked')
+          );
+          const irrCb = checked.find((cb) => (cb.value || "").startsWith("IRR_SA_"));
+          let isoPeriod = "2025-07";
+          let band = "filtered";
+          if (irrCb) {
+            const m = (irrCb.value || "").match(/^IRR_SA_([^?]+)\?(.+)$/);
+            if (m) { isoPeriod = m[1]; band = m[2]; }
+          }
+          fetch("/api/gee/analyze-irrigation/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              geometry: feature.geometry,
+              iso_period: isoPeriod, band,
+            }),
+          })
+            .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+            .then((data) => {
+              const items = Array.isArray(data.items) ? data.items : [];
+              const irrigated = items.find((it) => /irrig/i.test(it.label || ""));
+              const total = items.find((it) => /boundary total/i.test(it.label || ""));
+              const fmt = (v) => (v == null ? "—" :
+                Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }));
+              const share = irrigated && irrigated.share_pct != null
+                ? `${irrigated.share_pct.toFixed(1)}%` : "—";
+              statsEl.innerHTML = `
+                <div class="d-flex justify-content-between align-items-baseline">
+                  <span class="text-secondary small">Irrigated (${band})</span>
+                  <span class="fw-semibold">${fmt(irrigated && irrigated.area_ha)} ha</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-baseline">
+                  <span class="text-secondary small">Boundary total</span>
+                  <span class="fw-semibold">${fmt(total && total.area_ha)} ha</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-baseline">
+                  <span class="text-secondary small">Share</span>
+                  <span class="fw-semibold">${share}</span>
+                </div>
+                <div class="text-secondary small mt-1" style="opacity:0.7;">period ${isoPeriod}</div>
+              `;
+            })
+            .catch((err) => {
+              statsEl.innerHTML = `<div class="text-warning small">Could not load irrigated area: ${err.message}</div>`;
+            });
+        }
 
         btn.addEventListener("click", () => {
+          const mode = select ? (select.value || "soil") : "soil";
+          if (mode === "irrigation") {
+            this.analysisManager.runBoundaryIrrigationAnalysis(feature, name);
+            popup.remove();
+            return;
+          }
+          if (mode === "wapor_ts") {
+            const range = root ? this._selectedWaporPopupDateRange(root) : {};
+            if (!range.start_date || !range.end_date) {
+              this.setStatus("Pick a WaPOR start and end date first.", true);
+              if (root) this._populateWaporPopupPicker(root);
+              return;
+            }
+            if (range.start_date > range.end_date) {
+              this.setStatus("Start date must be before or equal to end date.", true);
+              return;
+            }
+            if (
+              root &&
+              (!this._isAvailableWaporPopupDate(root, range.start_date) ||
+                !this._isAvailableWaporPopupDate(root, range.end_date))
+            ) {
+              this.setStatus("Pick one of the available WaPOR dates.", true);
+              return;
+            }
+            this.analysisManager.runBoundaryWaporTimeseries(feature, name, {
+              start_date: range.start_date,
+              end_date: range.end_date,
+            });
+            popup.remove();
+            return;
+          }
           if (!this.analysisManager.currentSuitability) {
             this.setStatus(_t("status_select_suit", "Select a suitability map first."), true);
             return;
           }
-          const mode = select ? (select.value || "soil") : "soil";
           this.analysisManager.runBoundaryAnalysis(feature, name, mode);
           popup.remove();
         });
@@ -104,6 +306,37 @@
         return renderedFeature;
       }
       return info.features[idx] || renderedFeature;
+    }
+
+    // For a multi-part feature, return just the single polygon part that
+    // contains the click point. Some homelands (e.g. Bophuthatswana) are one
+    // feature made of exclaves scattered across the country, so highlighting
+    // the whole feature lights up pieces far from the click and looks like
+    // several homelands are selected at once. Returns the whole feature when
+    // it isn't a MultiPolygon or the click isn't inside any part.
+    _clickedPolygonPart(feature, lngLat) {
+      if (!feature || !feature.geometry || !lngLat
+          || typeof turf === "undefined"
+          || typeof turf.booleanPointInPolygon !== "function"
+          || typeof turf.polygon !== "function") {
+        return feature;
+      }
+      const g = feature.geometry;
+      if (g.type !== "MultiPolygon") return feature;
+      let pt;
+      try { pt = turf.point([lngLat.lng, lngLat.lat]); } catch (_) { return feature; }
+      for (const coords of (g.coordinates || [])) {
+        try {
+          if (turf.booleanPointInPolygon(pt, turf.polygon(coords))) {
+            return {
+              type: "Feature",
+              properties: { ...(feature.properties || {}) },
+              geometry: { type: "Polygon", coordinates: coords },
+            };
+          }
+        } catch (_) { /* skip bad ring */ }
+      }
+      return feature;
     }
 
     _normalizeBoundaryGeometry(geometry) {
@@ -314,7 +547,14 @@
           this.map.getCanvas().style.cursor = "";
         });
 
-        this.map.on("click", fillId, (e) => this.onBoundaryClick(e, id));
+        // Store the handler so removeBoundaryVectorLayer can unbind it.
+        // Layer ids are deterministic, so without this a toggle off/on would
+        // stack handlers and fire onBoundaryClick (and open popups) twice.
+        const clickHandler = (e) => this.onBoundaryClick(e, id);
+        this.map.on("click", fillId, clickHandler);
+        if (this.boundaryLayerData[id]) {
+          this.boundaryLayerData[id].clickHandler = clickHandler;
+        }
 
         this.ensureAttributePanelVisible();
         this.renderBoundaryAttributeTableForLayer(id, label, features, null);
@@ -336,6 +576,9 @@
       const fillId = info ? info.fillId : `${id}_fill`;
       const lineId = info ? info.lineId : `${id}_line`;
 
+      if (info && info.clickHandler) {
+        try { this.map.off("click", fillId, info.clickHandler); } catch (_) {}
+      }
       if (this.map.getLayer(fillId)) this.map.removeLayer(fillId);
       if (this.map.getLayer(lineId)) this.map.removeLayer(lineId);
       if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
@@ -536,7 +779,10 @@
         if (!e.features || !e.features.length) return;
 
         const renderedFeature = e.features[0];
-        const feature = this._fullFeatureFromRenderedFeature(renderedFeature, layerId);
+        const fullFeature = this._fullFeatureFromRenderedFeature(renderedFeature, layerId);
+        // Select only the polygon piece under the click, not every scattered
+        // part of a multi-part homeland.
+        const feature = this._clickedPolygonPart(fullFeature, e.lngLat);
         this.analysisManager.currentBoundaryFeature = feature;
         this.highlight(feature);
         API.updateLayerZOrder();
@@ -562,13 +808,21 @@
           props.name ||
           "Boundary";
 
+        // Only one boundary popup at a time. A stale popup left open would
+        // duplicate the dropdown and (because the stats loader looks controls
+        // up by global id) leave this popup's "Loading…" stuck forever.
+        if (this._activePopup) {
+          try { this._activePopup.remove(); } catch (_) {}
+          this._activePopup = null;
+        }
+
         const popup = new maplibregl.Popup({
           closeButton: true,
           closeOnClick: true,
           maxWidth: "340px",
         })
           .setLngLat(e.lngLat)
-          .setHTML(this._buildBoundaryPopupHtml(name))
+          .setHTML(this._buildBoundaryPopupHtml(name, feature))
           .addTo(this.map);
 
         this._activePopup = popup;

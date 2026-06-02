@@ -466,58 +466,67 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // ----- Tweaks panel (layer opacity for now) -----
+  // The global "Layer opacity" slider used to iterate EVERY raster on the
+  // map and dim it -- which also dimmed the BASEMAP. It now drives only the
+  // overlay rasters (everything that isn't a basemap/decoration layer),
+  // routed through map-core's guarded setter so the basemap is never
+  // touched. Each move also keeps the per-layer sidebar sliders in sync.
+  const GLOBAL_OPACITY_KEY = "iv:global-layer-opacity";
   (function wireTweaksPanel() {
     const toggleBtn = document.getElementById("tweaksToggle");
     const panel = document.getElementById("tweaksPanel");
     const closeBtn = document.getElementById("tweaksClose");
     const slider = document.getElementById("tweakLayerOpacity");
-    const valueOut = document.getElementById("tweakLayerOpacityValue");
+    const sliderValue = document.getElementById("tweakLayerOpacityValue");
     if (!toggleBtn || !panel || !slider) return;
 
-    const STORAGE_KEY = "iv:layer-opacity";
+    // Ids of raster overlays currently on the map -- i.e. everything the
+    // user added, excluding the basemap and map-decoration layers. Falls
+    // back to an empty list until the map/style is ready.
+    const overlayRasterIds = () => {
+      const map = (window.MAPVIEWER || {}).map;
+      if (!map || typeof map.getStyle !== "function") return [];
+      let layers;
+      try { layers = (map.getStyle().layers || []); } catch (_) { return []; }
+      return layers
+        .filter((l) => l.type === "raster" && !l.id.startsWith("basemap")
+          && l.id !== "boundary-highlight"
+          && l.id !== "boundary-highlight-line"
+          && l.id !== "boundary-highlight-point")
+        .map((l) => l.id);
+    };
 
-    // Apply opacity to every raster layer the map currently has. This keeps
-    // it simple — the suitability raster is the only thing whose opacity
-    // we want to touch, and it's the only raster on the map at a time
-    // (basemaps are vector or raster-source, applied via separate IDs).
-    function applyOpacity(pct) {
-      const map = window.MAPVIEWER && window.MAPVIEWER.map;
-      if (!map || typeof map.getStyle !== "function") return;
-      const opacity = Math.max(0, Math.min(1, pct / 100));
-      try {
-        const layers = map.getStyle().layers || [];
-        layers.forEach((l) => {
-          // Only the suitability raster — basemap rasters use IDs we
-          // wouldn't want to dim.
-          if (l.type === "raster" && l.id && l.source === l.id) {
-            // Suitability layers in addRasterLayer use `id` as both layer
-            // id and source id, basemaps don't follow that convention.
-            map.setPaintProperty(l.id, "raster-opacity", opacity);
-          }
-        });
-      } catch (_) { /* map not ready yet */ }
+    const applyGlobalOpacity = (pct) => {
+      const API = window.MAPVIEWER || {};
+      const v = Math.max(10, Math.min(100, Math.round(pct)));
+      overlayRasterIds().forEach((id) => {
+        if (typeof API.setLayerOpacityPct === "function") {
+          API.setLayerOpacityPct(id, v);      // guarded: never dims basemap
+        }
+      });
+      // Keep the basemap pinned to full opacity defensively.
+      if (typeof API.restoreBasemapOpacity === "function") API.restoreBasemapOpacity();
+    };
+
+    // Restore the last chosen global opacity.
+    const storedPct = parseInt(localStorage.getItem(GLOBAL_OPACITY_KEY), 10);
+    if (Number.isFinite(storedPct)) {
+      slider.value = String(Math.max(10, Math.min(100, storedPct)));
+      if (sliderValue) sliderValue.textContent = slider.value + "%";
     }
-
-    function setValue(pct, persist) {
-      const clamped = Math.max(10, Math.min(100, Math.round(pct)));
-      slider.value = String(clamped);
-      if (valueOut) valueOut.textContent = clamped + "%";
-      applyOpacity(clamped);
-      if (persist) localStorage.setItem(STORAGE_KEY, String(clamped));
-    }
-
-    // Restore saved value on init.
-    const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
-    setValue(Number.isFinite(saved) ? saved : 100, false);
-
-    // Re-apply when a new raster layer is added (otherwise it loads at 100%
-    // even if the user has dialed opacity down).
-    document.addEventListener("iv:layer-added", () => {
-      setValue(parseInt(slider.value, 10) || 100, false);
-    });
 
     slider.addEventListener("input", () => {
-      setValue(parseInt(slider.value, 10) || 100, true);
+      const v = parseInt(slider.value, 10) || 100;
+      if (sliderValue) sliderValue.textContent = v + "%";
+      localStorage.setItem(GLOBAL_OPACITY_KEY, String(v));
+      applyGlobalOpacity(v);
+    });
+
+    // When a new overlay raster is added, bring it to the current slider value.
+    document.addEventListener("iv:layer-added", (e) => {
+      if (e.detail && e.detail.type === "raster") {
+        applyGlobalOpacity(parseInt(slider.value, 10) || 100);
+      }
     });
 
     // ----- Look toggles: Mood / Chrome / Palette -----
@@ -736,6 +745,104 @@ document.addEventListener("DOMContentLoaded", function () {
 
       periodEl.addEventListener("change", rebuildDataset);
       bandEl.addEventListener("change", rebuildDataset);
+    });
+  })();
+
+  // ----- WaPOR dekad picker (per-layer) -----
+  // Mirrors the irrigation picker but for ``WAPOR_SA_<iso>?<dekad>``.
+  // The Band selector in the template is rendered as a Dekad selector
+  // (D1/D2/D3) for ic_kind="wapor".
+  (function wireWaporPicker() {
+    const leaves = document.querySelectorAll(
+      '.layer-leaf-with-picker[data-ic-kind="wapor"]'
+    );
+    if (!leaves.length) return;
+
+    let periodsPromise = null;
+    function fetchPeriods() {
+      if (!periodsPromise) {
+        periodsPromise = fetch("/api/gee/wapor-periods/")
+          .then((r) => r.json())
+          .then((d) => Array.isArray(d.periods) ? d.periods : []);
+      }
+      return periodsPromise;
+    }
+
+    leaves.forEach((leaf) => {
+      const cb       = leaf.querySelector('input[name="layer"]');
+      const periodEl = leaf.querySelector(".layer-picker-period");
+      const dekadEl  = leaf.querySelector(".layer-picker-band");
+      if (!cb || !periodEl || !dekadEl) return;
+
+      const seedDataset = cb.value || "";
+      const [seedIso, seedDekad] = (() => {
+        const m = seedDataset.match(/^WAPOR_SA_([^?]+)\?(.+)$/);
+        return m ? [m[1], m[2]] : ["", "D2"];
+      })();
+      dekadEl.value = seedDekad;
+
+      let periodsLoaded = false;
+      async function ensurePeriods() {
+        if (periodsLoaded) return;
+        const periods = await fetchPeriods();
+        // Deduplicate by iso_period — same month appears multiple times,
+        // one per dekad. Keep months only.
+        const months = [];
+        const seen = new Set();
+        periods.forEach((p) => {
+          if (seen.has(p.iso_period)) return;
+          seen.add(p.iso_period);
+          months.push({ iso_period: p.iso_period, month_label: p.month_label });
+        });
+
+        periodEl.innerHTML = "";
+        if (!months.length) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "(none yet)";
+          periodEl.appendChild(opt);
+          periodEl.disabled = true;
+        } else {
+          months.forEach((p) => {
+            const opt = document.createElement("option");
+            opt.value = p.iso_period;
+            opt.textContent = p.month_label || p.iso_period;
+            periodEl.appendChild(opt);
+          });
+          if (seedIso) periodEl.value = seedIso;
+          if (!periodEl.value && months.length) {
+            periodEl.value = months[months.length - 1].iso_period;
+          }
+          periodEl.disabled = false;
+        }
+        periodsLoaded = true;
+      }
+
+      const lazyLoad = () => { ensurePeriods(); };
+      cb.addEventListener("change", lazyLoad, { once: true });
+      periodEl.addEventListener("focus", lazyLoad, { once: true });
+      dekadEl.addEventListener("focus", lazyLoad, { once: true });
+
+      function rebuildDataset() {
+        const iso = periodEl.value || seedIso;
+        const dekad = dekadEl.value || "D2";
+        if (!iso) return;
+        const newValue = `WAPOR_SA_${iso}?${dekad}`;
+        if (cb.value === newValue) return;
+        cb.value = newValue;
+        if (cb.checked) {
+          const wasChecked = cb.checked;
+          cb.checked = false;
+          cb.dispatchEvent(new Event("change"));
+          setTimeout(() => {
+            cb.checked = wasChecked;
+            cb.dispatchEvent(new Event("change"));
+          }, 0);
+        }
+      }
+
+      periodEl.addEventListener("change", rebuildDataset);
+      dekadEl.addEventListener("change", rebuildDataset);
     });
   })();
 

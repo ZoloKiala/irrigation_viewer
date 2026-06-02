@@ -129,38 +129,110 @@
     if (wrapper) wrapper.classList.add("nav-status--on");
   }
 
-  function showLegend() {
+  // Single shared #legend element renders MULTIPLE active legends stacked
+  // vertically. Each "kind" owns its own slot in _legendSlots; updating one
+  // doesn't clobber the others. _renderLegends() re-emits HTML from the
+  // current slot state and shows/hides the container.
+  const _legendSlots = { suitability: null, irrigation: null, wapor: null };
+
+  function _renderLegends() {
     if (!legendEl) return;
-    // Pull live palette so it tracks the Tweaks panel's palette tile.
+    const sections = [];
+    if (_legendSlots.suitability) sections.push(_legendSlots.suitability);
+    if (_legendSlots.irrigation)  sections.push(_legendSlots.irrigation);
+    if (_legendSlots.wapor)       sections.push(_legendSlots.wapor);
+    if (!sections.length) {
+      legendEl.style.display = "none";
+      legendEl.innerHTML = "";
+      return;
+    }
+    legendEl.style.display = "block";
+    legendEl.innerHTML = sections
+      .map((html) => `<div class="legend-section">${html}</div>`)
+      .join("");
+  }
+
+  function showLegend() {
     const p = window.IV_SUIT_PALETTE || {
       N: "#f1e5cd", S1: "#166534", S2: "#22c55e", S3: "#fde047",
     };
-    legendEl.style.display = "block";
-    legendEl.innerHTML = `
+    _legendSlots.suitability = `
       <div class="legend-title">Suitability</div>
-      <div class="legend-item">
-        <span class="legend-color" style="background:${p.N};"></span>
-        <span>N</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color" style="background:${p.S1};"></span>
-        <span>S1</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color" style="background:${p.S2};"></span>
-        <span>S2</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color" style="background:${p.S3};"></span>
-        <span>S3</span>
-      </div>
+      <div class="legend-item"><span class="legend-color" style="background:${p.N};"></span><span>N</span></div>
+      <div class="legend-item"><span class="legend-color" style="background:${p.S1};"></span><span>S1</span></div>
+      <div class="legend-item"><span class="legend-color" style="background:${p.S2};"></span><span>S2</span></div>
+      <div class="legend-item"><span class="legend-color" style="background:${p.S3};"></span><span>S3</span></div>
     `;
+    _renderLegends();
   }
 
   function hideLegend() {
-    if (!legendEl) return;
-    legendEl.style.display = "none";
-    legendEl.innerHTML = "";
+    _legendSlots.suitability = null;
+    _renderLegends();
+  }
+
+  function showIrrigationLegend(band) {
+    let body = "";
+    if (band === "probability") {
+      body = `
+        <div class="legend-title">Irrigation probability</div>
+        <div class="legend-gradient legend-gradient--prob"></div>
+        <div class="legend-gradient-axis">
+          <span>0.0</span><span>0.5</span><span>1.0</span>
+        </div>
+      `;
+    } else {
+      const title = band === "raw" ? "Irrigated (raw)" : "Irrigated (filtered)";
+      body = `
+        <div class="legend-title">${title}</div>
+        <div class="legend-item">
+          <span class="legend-color" style="background:#1a9641;"></span>
+          <span>Irrigated</span>
+        </div>
+        <div class="legend-foot">non-irrigated pixels are transparent</div>
+      `;
+    }
+    _legendSlots.irrigation = body;
+    _renderLegends();
+  }
+
+  function hideIrrigationLegend() {
+    _legendSlots.irrigation = null;
+    _renderLegends();
+  }
+
+  function showWaporLegend(dekadDate) {
+    const renderAxis = (lo, hi) => {
+      const mid = (lo + hi) / 2;
+      _legendSlots.wapor = `
+        <div class="legend-title">Crop water use (mm/dekad)</div>
+        <div class="legend-gradient legend-gradient--wapor"></div>
+        <div class="legend-gradient-axis">
+          <span>${lo.toFixed(1)}</span>
+          <span>${mid.toFixed(1)}</span>
+          <span>${hi.toFixed(1)}</span>
+        </div>
+        <div class="legend-foot">WaPOR L1 AETI_D downscaled to 20 m</div>
+      `;
+      _renderLegends();
+    };
+    renderAxis(0, 30);
+    if (!dekadDate) return;
+    fetch("/api/gee/wapor-periods/")
+      .then((r) => r.json())
+      .then((d) => {
+        const p = (d.periods || []).find((x) => x.dekad_date === dekadDate);
+        if (!p) return;
+        if (typeof p.vmin === "number" && typeof p.vmax === "number") {
+          renderAxis(p.vmin, p.vmax);
+        }
+      })
+      .catch(() => {});
+  }
+
+  function hideWaporLegend() {
+    _legendSlots.wapor = null;
+    _renderLegends();
   }
 
   // Attribute panel helpers (panel visibility now user-controlled)
@@ -454,13 +526,101 @@
     updateLayerZOrder();
   }
 
+  // ---------- Layer opacity ----------
+  // Opacity is driven by the single global "Layer opacity" slider in the
+  // tweaks panel (see ui.js). These helpers apply/persist it per layer;
+  // values survive reloads via localStorage keyed by layer id.
+  const _LAYER_OPACITY_KEY = (id) => `iv:layer-opacity:${id}`;
+
+  // Hard guard: any of these prefixes / exact ids identifies a basemap or
+  // map-decoration layer that the opacity setter must NEVER touch.
+  function isBasemapLayerId(id) {
+    if (!id) return true;
+    if (id.startsWith("basemap")) return true;
+    // Map-decoration ids used elsewhere (boundary highlight, etc.).
+    if (id === "boundary-highlight"
+        || id === "boundary-highlight-line"
+        || id === "boundary-highlight-point") return true;
+    return false;
+  }
+
+  // Defensive: re-pin every basemap raster to full opacity. If some other
+  // code path ever wrote raster-opacity < 1 on a basemap, this restores it
+  // the next time any per-layer slider is touched.
+  function restoreBasemapOpacity() {
+    const map = API.map;
+    if (!map || typeof map.getStyle !== "function") return;
+    try {
+      (map.getStyle().layers || []).forEach((l) => {
+        if (l.type === "raster" && isBasemapLayerId(l.id)) {
+          map.setPaintProperty(l.id, "raster-opacity", 1);
+        }
+      });
+    } catch (_) { /* style not ready */ }
+  }
+
+  function setLayerOpacityPct(id, pct) {
+    const map = API.map;
+    if (!map || !id) return;
+    if (isBasemapLayerId(id)) return;  // never dim the basemap
+    restoreBasemapOpacity();           // keep basemap at 1 in case anything drifted
+    const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+    const op = clamped / 100;
+    try {
+      if (!map.getLayer(id)) return;
+      const ltype = map.getLayer(id).type;
+      if (ltype === "raster") {
+        map.setPaintProperty(id, "raster-opacity", op);
+      } else if (ltype === "fill") {
+        map.setPaintProperty(id, "fill-opacity", op);
+      } else if (ltype === "line") {
+        map.setPaintProperty(id, "line-opacity", op);
+      } else if (ltype === "circle") {
+        map.setPaintProperty(id, "circle-opacity", op);
+      }
+    } catch (_) { /* layer not present */ }
+    localStorage.setItem(_LAYER_OPACITY_KEY(id), String(clamped));
+  }
+
+  API.setLayerOpacityPct = setLayerOpacityPct;
+  API.restoreBasemapOpacity = restoreBasemapOpacity;
+
+  function isCategoricalRasterDataset(dataset, isSuitability) {
+    if (isSuitability) return true;
+    if (!dataset) return false;
+    if (dataset.startsWith("IRR_SA_")) {
+      const band = (dataset.split("?")[1] || "filtered").toLowerCase();
+      return band !== "probability";
+    }
+    return false;
+  }
+
+  function rasterPaintForDataset(dataset, isSuitability) {
+    const categorical = isCategoricalRasterDataset(dataset, isSuitability);
+    return {
+      "raster-resampling": categorical ? "nearest" : "linear",
+      "raster-fade-duration": categorical ? 0 : 150,
+    };
+  }
+
+  function addRasterMapLayer(id, dataset, isSuitability) {
+    const map = API.map;
+    if (!map || !id) return;
+    map.addLayer({
+      id,
+      type: "raster",
+      source: id,
+      paint: rasterPaintForDataset(dataset, isSuitability),
+    });
+  }
+
   async function addRasterLayer(dataset, id, label, isSuitability, analysisManager) {
     const map = API.map;
     if (!map || !dataset || !id) return;
 
     if (map.getSource(id)) {
       if (!map.getLayer(id)) {
-        map.addLayer({ id, type: "raster", source: id });
+        addRasterMapLayer(id, dataset, isSuitability);
       }
       if (isSuitability && analysisManager) {
         const bounds = rasterMetaById[id] ? rasterMetaById[id].bounds : null;
@@ -470,6 +630,10 @@
           "<em>Draw a polygon on the map (analysis runs automatically) or click a boundary and use “Run analysis” in the popup.</em>"
         );
       }
+      // Let the tweaks-panel slider apply the current opacity to this layer.
+      document.dispatchEvent(
+        new CustomEvent("iv:layer-added", { detail: { id, type: "raster" } })
+      );
       updateLayerZOrder();
       return;
     }
@@ -514,18 +678,16 @@
         type: "raster",
         tiles: [tileUrl],
         tileSize: 256,
-        maxzoom: 7,
+        // EE serves tiles well past z16; keep the cap high enough that 10 m
+        // irrigation pixels stay native instead of becoming overzoomed haze.
+        maxzoom: 18,
       };
       if (bounds) {
         sourceConfig.bounds = [bounds.west, bounds.south, bounds.east, bounds.north];
       }
       map.addSource(id, sourceConfig);
 
-      map.addLayer({
-        id,
-        type: "raster",
-        source: id,
-      });
+      addRasterMapLayer(id, dataset, isSuitability);
 
       // Let the tweaks panel re-apply its opacity to the new layer.
       document.dispatchEvent(
@@ -542,22 +704,15 @@
 
       if (isSuitability && analysisManager) {
         analysisManager.setSuitability({ id, dataset, label }, bounds);
-
-        if (bounds) {
-          const b = bounds;
-          map.fitBounds(
-            [
-              [b.west, b.south],
-              [b.east, b.north],
-            ],
-            { padding: 40, duration: 800, maxZoom: 7 }
-          );
-        }
-
         setAnalysisHtml(
           "<em>Draw a polygon on the map (analysis runs automatically) or click a boundary and use “Run analysis” in the popup.</em>"
         );
       }
+
+      // Deliberately do NOT recenter/zoom when a raster layer is toggled on.
+      // These layers (suitability, SA irrigation, WaPOR) now span most of the
+      // country, so fitting the camera to their bounds just zoomed the user
+      // out to all of South Africa. Keep the user's current view instead.
 
       setStatus(_t("status_map_loaded", "Map loaded."), false);
       updateLayerZOrder();
@@ -649,9 +804,29 @@
       if (mode === "polygon") {
         draw.changeMode("draw_polygon");
         setStatus(
-          "Click on the map to draw a polygon. Double-click to finish.",
+          "Click on the map to add vertices. Click ✓ (or press Enter) to finish.",
           false
         );
+        return;
+      }
+
+      if (mode === "finish") {
+        // Force-finalize the in-progress polygon. MapboxDraw's onStop for
+        // draw_polygon commits the polygon when we change modes (if it has
+        // >=3 vertices), which fires draw.create. The draw.create handler in
+        // map-init.js then opens the popup — we DON'T open one here too, or
+        // we'd end up with two popups for the same polygon.
+        let currentMode;
+        try { currentMode = draw.getMode(); } catch (_) { currentMode = ""; }
+        if (currentMode !== "draw_polygon") {
+          setStatus("Nothing to finish — click ▭ to start drawing.", false);
+          return;
+        }
+        try { draw.changeMode("simple_select"); } catch (_) {}
+        setStatus("Polygon finished.", false);
+        drawToolbar.querySelectorAll("button[data-mode]").forEach((b) => {
+          b.classList.toggle("active", b.dataset.mode === "select");
+        });
         return;
       }
 
@@ -768,6 +943,8 @@
 
         const isBoundary = dataset.startsWith("BOUNDARY_");
         const isSocio = id.startsWith("SOC_");
+        const isIrrigation = dataset.startsWith("IRR_SA_");
+        const isWapor = dataset.startsWith("WAPOR_SA_");
         const isSuitability =
           dataset.startsWith("projects/") && !isSocio && !isBoundary;
 
@@ -839,6 +1016,52 @@
             socioManager.addSocioLayerVector(dataset, id, labelText);
           } else {
             socioManager.removeSocioLayerVector(id);
+          }
+        }
+
+        if (isIrrigation) {
+          if (cb.checked) {
+            // Multiple irrigation layers don't really make sense; uncheck any
+            // sibling irrigation row so the map only shows one period/band.
+            layerCheckboxes.forEach((other) => {
+              if (other === cb) return;
+              const od = other.value || "";
+              if (other.checked && od.startsWith("IRR_SA_")) {
+                other.checked = false;
+                removeMapLayer(other.dataset.id);
+              }
+            });
+            addRasterLayer(dataset, id, labelText, false, analysisManager);
+            // Drive legend from the dataset's ?<band> suffix.
+            const band = (dataset.split("?")[1] || "filtered").toLowerCase();
+            showIrrigationLegend(band);
+          } else {
+            removeMapLayer(id);
+            hideIrrigationLegend();
+          }
+        }
+
+        if (isWapor) {
+          if (cb.checked) {
+            // Single-select: drop any other WaPOR dekads currently on so the
+            // viewport only renders one dekad at a time.
+            layerCheckboxes.forEach((other) => {
+              if (other === cb) return;
+              const od = other.value || "";
+              if (other.checked && od.startsWith("WAPOR_SA_")) {
+                other.checked = false;
+                removeMapLayer(other.dataset.id);
+              }
+            });
+            addRasterLayer(dataset, id, labelText, false, analysisManager);
+            // Map the dekad suffix (D1/D2/D3) to its date so the legend can
+            // pull the matching p2/p98 from /api/gee/wapor-periods/.
+            const dekadKey = (dataset.split("?")[1] || "D2").toUpperCase();
+            const dateMap = { D1: "2025-07-01", D2: "2025-07-11", D3: "2025-07-21" };
+            showWaporLegend(dateMap[dekadKey]);
+          } else {
+            removeMapLayer(id);
+            hideWaporLegend();
           }
         }
 
@@ -981,6 +1204,281 @@
   API.setActiveLayer = setActiveLayer;
   API.showLegend = showLegend;
   API.hideLegend = hideLegend;
+  API.showIrrigationLegend = showIrrigationLegend;
+  API.hideIrrigationLegend = hideIrrigationLegend;
+  API.showWaporLegend = showWaporLegend;
+  API.hideWaporLegend = hideWaporLegend;
+
+  /**
+   * Show a popup at ``lngLat`` for a freehand-drawn polygon. Mirrors the
+   * boundary-click popup: lets the user choose an analysis type and run it
+   * against the drawn polygon. Country-aware (SA has WaPOR + irrigation;
+   * other countries reuse the suitability flow).
+   */
+  let _waporPopupPeriodsPromise = null;
+  function _fetchWaporPopupPeriods() {
+    if (!_waporPopupPeriodsPromise) {
+      _waporPopupPeriodsPromise = fetch("/api/gee/wapor-periods/")
+        .then((r) => r.json())
+        .then((d) => Array.isArray(d.periods) ? d.periods : [])
+        .catch(() => []);
+    }
+    return _waporPopupPeriodsPromise;
+  }
+
+  function _toggleWaporPopupPicker(popupEl) {
+    const mode = popupEl.querySelector("#drawAnalysisType")?.value || "";
+    const picker = popupEl.querySelector(".wapor-popup-picker");
+    if (picker) picker.classList.toggle("d-none", mode !== "wapor_ts");
+  }
+
+  async function _populateWaporPopupPicker(popupEl) {
+    const startEl = popupEl.querySelector(".wapor-popup-start-date");
+    const endEl = popupEl.querySelector(".wapor-popup-end-date");
+    if (!startEl || !endEl || popupEl.__waporPickerLoaded) return;
+    const periods = await _fetchWaporPopupPeriods();
+    popupEl.__waporPeriods = periods;
+    if (!periods.length) {
+      [startEl, endEl].forEach((el) => {
+        el.value = "";
+        el.removeAttribute("min");
+        el.removeAttribute("max");
+        el.disabled = true;
+      });
+      popupEl.__waporPickerLoaded = true;
+      return;
+    }
+    const availableDates = periods.map((p) => p.dekad_date).filter(Boolean).sort();
+    [startEl, endEl].forEach((el) => {
+      el.min = availableDates[0] || "";
+      el.max = availableDates[availableDates.length - 1] || "";
+      el.dataset.availableDates = availableDates.join(",");
+      el.disabled = false;
+    });
+    startEl.value = availableDates[0] || "";
+    endEl.value = availableDates[availableDates.length - 1] || "";
+    popupEl.__waporPickerLoaded = true;
+  }
+
+  function _selectedWaporPopupDateRange(popupEl) {
+    return {
+      start_date: popupEl.querySelector(".wapor-popup-start-date")?.value || "",
+      end_date: popupEl.querySelector(".wapor-popup-end-date")?.value || "",
+    };
+  }
+
+  function _isAvailableWaporPopupDate(popupEl, value) {
+    const raw = popupEl.querySelector(".wapor-popup-start-date")?.dataset.availableDates || "";
+    const dates = raw.split(",").filter(Boolean);
+    return !dates.length || dates.includes(value);
+  }
+
+  function _runDrawAnalysis(mode, feature, analysisManager, opts = {}) {
+    const fakeFeature = {
+      geometry: feature.geometry,
+      properties: { name: "Drawn polygon" },
+    };
+    if (mode === "wapor_ts") {
+      analysisManager.runFreehandWaporTimeseries(feature.geometry, {
+        start_date: opts.start_date || null,
+        end_date: opts.end_date || null,
+      });
+    } else if (mode === "irrigation") {
+      analysisManager.runBoundaryIrrigationAnalysis(fakeFeature, "Drawn polygon");
+    } else {
+      analysisManager.runFreehandAnalysis();
+    }
+  }
+
+  function showDrawPolygonPopup(lngLat, feature, analysisManager) {
+    // Keep drawn-polygon popups singleton-safe. Draw completion can emit
+    // more than one event in quick succession (for example draw.create and
+    // draw.update), so clear any previous drawn popup before creating another.
+    try {
+      if (API._activeDrawPolygonPopup) API._activeDrawPolygonPopup.remove();
+    } catch (_) {}
+    API._activeDrawPolygonPopup = null;
+    try {
+      document
+        .querySelectorAll(".draw-polygon-popup")
+        .forEach((el) => el.remove());
+    } catch (_) {}
+
+    const country = getCurrentCountry();
+    const optsSA = `
+      <option value="irrigation" selected>Irrigated area (ha)</option>
+      <option value="wapor_ts">Crop water use (time series)</option>
+    `;
+    const optsOther = `
+      <option value="soil" selected>Suitability (area)</option>
+    `;
+    const options = country === "South Africa" ? optsSA : optsOther;
+
+    // Drawn polygon's area (geodesic, via turf) — mirrors the boundary popup.
+    let areaHtml = "";
+    if (feature && feature.geometry && typeof turf !== "undefined" && turf.area) {
+      try {
+        const ha = turf.area(feature) / 10000;
+        const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+        areaHtml = `<div class="text-secondary small mb-2">Area: ${fmt(ha / 100)} km² (${fmt(ha)} ha)</div>`;
+      } catch (_) {}
+    }
+
+    // Stack the select + button vertically so a narrow popup never clips
+    // the Run-analysis button at the map edge.
+    const html = `
+      <div class="small popup-body" style="min-width: 220px;">
+        <div class="fw-semibold mb-1">Drawn polygon</div>
+        ${areaHtml}
+        <label class="form-label form-label-sm mb-1">Analysis type</label>
+        <select id="drawAnalysisType" class="form-select form-select-sm mb-2">
+          ${options}
+        </select>
+        <div class="wapor-popup-picker mb-2 ${country === "South Africa" ? "" : "d-none"}">
+          <label class="form-label form-label-sm mb-1">Start date</label>
+          <input type="date" class="form-control form-control-sm mb-2 wapor-popup-start-date" disabled />
+          <label class="form-label form-label-sm mb-1">End date</label>
+          <input type="date" class="form-control form-control-sm wapor-popup-end-date" disabled />
+        </div>
+        <button id="drawAnalyzeBtn" type="button" class="btn btn-primary btn-sm w-100">
+          Run analysis
+        </button>
+      </div>
+    `;
+
+    const defaultMode = country === "South Africa" ? "irrigation" : "soil";
+
+    // Normalize the position to [lng, lat] array which MapLibre's setLngLat
+    // accepts most reliably across versions.
+    let normLngLat = lngLat;
+    if (lngLat && Number.isFinite(lngLat.lng) && Number.isFinite(lngLat.lat)) {
+      normLngLat = [lngLat.lng, lngLat.lat];
+    } else if (Array.isArray(lngLat) && lngLat.length >= 2) {
+      normLngLat = [lngLat[0], lngLat[1]];
+    }
+
+    let popup = null;
+    try {
+      popup = new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: false,
+        className: "draw-polygon-popup",
+        maxWidth: "240px",
+        anchor: "bottom",
+        offset: 12,
+      })
+        .setLngLat(normLngLat)
+        .setHTML(html)
+        .addTo(API.map);
+    } catch (err) {
+      console.warn("[draw popup] failed to render popup:", err, "pos:", normLngLat);
+      return null;
+    }
+
+    // Backup close-button wiring: in some browsers / map states the built-in
+    // close handler doesn't fire, leaving the popup stuck open. Explicitly
+    // attach a listener to the close button so it always removes the popup.
+    try {
+      const root = popup.getElement && popup.getElement();
+      if (root) {
+        const closeBtn = root.querySelector(".maplibregl-popup-close-button")
+          || root.querySelector(".mapboxgl-popup-close-button");
+        if (closeBtn) {
+          const stopPopupCloseEvent = (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+          };
+          ["pointerdown", "mousedown", "mouseup", "touchstart"].forEach((type) => {
+            closeBtn.addEventListener(type, stopPopupCloseEvent, true);
+          });
+          closeBtn.addEventListener("click", (ev) => {
+            stopPopupCloseEvent(ev);
+            try { popup.remove(); } catch (_) {}
+          }, true);
+        }
+      }
+    } catch (_) { /* ignore */ }
+
+    // Store handler state on the popup container so a single document-level
+    // delegated listener can find it on click. Event delegation removes any
+    // timing fragility from attaching listeners right after setHTML / addTo.
+    const popupEl = popup.getElement && popup.getElement();
+    if (popupEl) {
+      popupEl.__drawAnalyzeFeature = feature;
+      popupEl.__drawAnalyzeManager = analysisManager;
+      popupEl.__drawAnalyzeDefaultMode = defaultMode;
+      _toggleWaporPopupPicker(popupEl);
+      _populateWaporPopupPicker(popupEl);
+    }
+    API._activeDrawPolygonPopup = popup;
+    if (typeof popup.on === "function") {
+      popup.on("close", () => {
+        if (API._activeDrawPolygonPopup === popup) {
+          API._activeDrawPolygonPopup = null;
+        }
+      });
+    }
+
+    return popup;
+  }
+
+  // One-time document-level click delegation for the Run analysis button.
+  // Attached once on first call; subsequent popups share the same listener.
+  let _drawAnalyzeDelegationInstalled = false;
+  function _installDrawAnalyzeDelegation() {
+    if (_drawAnalyzeDelegationInstalled) return;
+    _drawAnalyzeDelegationInstalled = true;
+    document.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (!t || !t.closest) return;
+      const btn = t.closest("#drawAnalyzeBtn");
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const popupEl = btn.closest(".maplibregl-popup, .mapboxgl-popup");
+      if (!popupEl) return;
+      const feature = popupEl.__drawAnalyzeFeature;
+      const manager = popupEl.__drawAnalyzeManager;
+      const def = popupEl.__drawAnalyzeDefaultMode || "wapor_ts";
+      if (!feature || !manager) return;
+      const sel = popupEl.querySelector("#drawAnalysisType");
+      const mode = sel ? sel.value : def;
+      const range = _selectedWaporPopupDateRange(popupEl);
+      if (mode === "wapor_ts" && (!range.start_date || !range.end_date)) {
+        setStatus("Pick a WaPOR start and end date first.", true);
+        _populateWaporPopupPicker(popupEl);
+        return;
+      }
+      if (mode === "wapor_ts" && range.start_date > range.end_date) {
+        setStatus("Start date must be before or equal to end date.", true);
+        return;
+      }
+      if (
+        mode === "wapor_ts" &&
+        (!_isAvailableWaporPopupDate(popupEl, range.start_date) ||
+          !_isAvailableWaporPopupDate(popupEl, range.end_date))
+      ) {
+        setStatus("Pick one of the available WaPOR dates.", true);
+        return;
+      }
+      _runDrawAnalysis(mode, feature, manager, {
+        start_date: range.start_date,
+        end_date: range.end_date,
+      });
+    });
+    document.addEventListener("change", (ev) => {
+      const t = ev.target;
+      if (!t || t.id !== "drawAnalysisType") return;
+      const popupEl = t.closest(".maplibregl-popup, .mapboxgl-popup");
+      if (!popupEl) return;
+      _toggleWaporPopupPicker(popupEl);
+      if ((t.value || "") === "wapor_ts") _populateWaporPopupPicker(popupEl);
+    });
+  }
+  _installDrawAnalyzeDelegation();
+
+  API.showDrawPolygonPopup = showDrawPolygonPopup;
   API.ensureAttributePanelVisible = ensureAttributePanelVisible;
   API.hideAttributePanelIfEmpty = hideAttributePanelIfEmpty;
   API.removeAttributeTableForLayer = removeAttributeTableForLayer;
