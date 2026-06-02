@@ -19,7 +19,7 @@ jobs:
       # ---- Python (this repo: Django app with requirements.txt) ----
       - name: Set up Python
         if: ${{ hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != '' }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
