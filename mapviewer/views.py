@@ -2148,17 +2148,15 @@ def gee_irrigation_periods(request: HttpRequest) -> JsonResponse:
 def gee_wapor_periods(request: HttpRequest) -> JsonResponse:
     """Return the dekads the viewer can display.
 
-    A dekad is exposed if its mosaic file exists under ``out/wapor/``. Periods
-    are grouped by year-month so the picker can show "July 2025" with D1/D2/D3
-    options inside.
+    WaPOR is served from Earth Engine assets, so every configured dekad is
+    exposed regardless of whether a local GeoTIFF is present (there are none
+    in production). Periods are grouped by year-month so the picker can show
+    "July 2025" with D1/D2/D3 options inside.
     """
     available = []
     for dekad_key, dekad_date in _WAPOR_DEKAD_TO_DATE.items():
-        tif = _WAPOR_LOCAL_ROOT / f"wapor_{dekad_date}.tif"
-        if not tif.exists():
-            continue
         iso_period = dekad_date[:7]  # "2025-07"
-        lo, hi = _wapor_rescale_for(tif)
+        lo, hi = _WAPOR_STRETCH.get(dekad_date, (9.0, 23.0))
         available.append({
             "iso_period": iso_period,
             "month_label": _WAPOR_PERIOD_LABELS.get(iso_period, iso_period),
