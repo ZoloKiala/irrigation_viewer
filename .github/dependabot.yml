@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Python dependencies (requirements.txt is present).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Keep the GitHub Actions used in ci.yml up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # NOTE: no "npm" ecosystem block — this repo has no package.json
+  # (the front-end JS is loaded from CDNs). Add one here if a package.json
+  # is introduced later.

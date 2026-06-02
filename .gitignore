@@ -9,3 +9,10 @@ tethys-app-1-*.json
 *.sqlite3
 __pycache__/
 *.py[cod]
+
+# Collected static (build output from `collectstatic`)
+staticfiles/
+
+# Logs and OS cruft
+*.log
+.DS_Store
