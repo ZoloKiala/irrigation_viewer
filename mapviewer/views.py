@@ -14,7 +14,16 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-import rasterio  # used by the WaPOR local-tile endpoint
+# rasterio is only used by the local WaPOR GeoTIFF endpoints (tiles /
+# rescale / timeseries). Production serves WaPOR from Earth Engine and has no
+# local GeoTIFFs, and rasterio links against GDAL/expat system libs that some
+# hosts lack (e.g. Railway is missing libexpat.so.1). Import it defensively so
+# a missing system lib can't crash the whole URLconf — only the (unused-in-
+# prod) local endpoints would be affected.
+try:
+    import rasterio
+except Exception:  # pragma: no cover - missing native deps on minimal images
+    rasterio = None
 
 
 
