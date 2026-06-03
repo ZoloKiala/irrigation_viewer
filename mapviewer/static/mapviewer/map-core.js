@@ -1206,6 +1206,18 @@
     const selectedCountry = getCurrentCountry();
     currentCountry = selectedCountry; // keep in sync
 
+    // The suitability palette only applies to suitability rasters (Zimbabwe).
+    // South Africa uses irrigation/WaPOR layers (no suitability raster), so
+    // hide the Tweaks-panel "Suitability palette" section there.
+    try {
+      const paletteEl = document.getElementById("tweakPalette");
+      const paletteSection = paletteEl && paletteEl.closest(".tweaks-section");
+      if (paletteSection) {
+        paletteSection.style.display =
+          selectedCountry === "South Africa" ? "none" : "";
+      }
+    } catch (_) { /* tweaks panel not present */ }
+
     const matchesCountry = (leaf) => {
       const cb = leaf.querySelector('input[name="layer"]');
       const leafCountry =
