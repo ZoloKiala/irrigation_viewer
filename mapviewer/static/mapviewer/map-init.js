@@ -462,6 +462,37 @@
       // the Clear button.)
     }
 
+    // Automatic retry for transient EE tile failures (429/5xx). Re-fetches the
+    // affected source's tiles a few times with exponential backoff; the counter
+    // resets once the source loads cleanly, so steady-state load isn't retried.
+    const _tileRetry = {};
+    const _TILE_MAX_RETRY = 3;
+    const _scheduleTileRetry = (sourceId) => {
+      if (!sourceId) return;
+      const st = _tileRetry[sourceId] ||
+        (_tileRetry[sourceId] = { attempts: 0, timer: null });
+      if (st.attempts >= _TILE_MAX_RETRY || st.timer) return; // capped / pending
+      st.attempts += 1;
+      const delay = Math.min(8000, 1000 * Math.pow(2, st.attempts)); // 2s,4s,8s
+      st.timer = setTimeout(() => {
+        st.timer = null;
+        try {
+          const src = map.getSource(sourceId);
+          const styleSources = (map.getStyle && map.getStyle().sources) || {};
+          const tiles = styleSources[sourceId] && styleSources[sourceId].tiles;
+          if (src && typeof src.setTiles === "function" && tiles) {
+            src.setTiles(tiles); // force a re-fetch of this source's tiles
+          }
+        } catch (_) { /* source was removed */ }
+      }, delay);
+    };
+    map.on("sourcedata", (e) => {
+      if (e && e.sourceId && e.isSourceLoaded && _tileRetry[e.sourceId]) {
+        if (_tileRetry[e.sourceId].timer) clearTimeout(_tileRetry[e.sourceId].timer);
+        delete _tileRetry[e.sourceId]; // loaded OK — clear the retry state
+      }
+    });
+
     map.on("error", (e) => {
       if (!e || !e.error || !e.error.url) return;
       console.error("Map error", e);
@@ -476,9 +507,10 @@
         /(^|\D)(429|5\d\d)(\D|$)|too many requests|quota|restricted mode|service unavailable/i.test(msgText);
       if (isEarthEngineTile && isTransientEE) {
         // Transient EE error on a tile fetch (rate limit / 5xx — e.g. the 503
-        // you get under restricted quota). Hide the spinner and stay silent
-        // rather than showing a raw "AJAXError (503)".
+        // you get under restricted quota). Hide the spinner, stay silent, and
+        // quietly retry the source's tiles a few times with backoff.
         API.hideMapSpinner();
+        _scheduleTileRetry(e.sourceId);
         return;
       }
       const msg = `Tile error: ${e.error.message || ""}`;
