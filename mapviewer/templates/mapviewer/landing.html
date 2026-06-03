@@ -180,7 +180,7 @@
 
         <div class="lp-grid">
           {% for g in groups %}
-            <a href="{% url 'mapviewer:map' %}#group={{ g.id }}"
+            <a href="{% url 'mapviewer:map' %}?country={{ g.countries.0|urlencode }}#group={{ g.id }}"
                class="lp-card{% if g.coming_soon %} lp-card-coming{% endif %}"
                data-group="{{ g.id }}"
                data-aos="{% cycle 'fade-right' 'zoom-in-up' 'fade-left' %}"

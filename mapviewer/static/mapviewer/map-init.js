@@ -521,5 +521,30 @@
     initMap();
     API.wireLayerTreeGroups();
     API.wireLayerGroupDragAndDrop();
+
+    // Deep-link from the landing-page use-case cards: ?country=South Africa
+    // selects that country and zooms the map to it (via the change handler,
+    // which calls onCountryChange + filters the layer tree).
+    (function applyCountryFromUrl() {
+      let wanted;
+      try { wanted = new URLSearchParams(window.location.search).get("country"); }
+      catch (_) { return; }
+      if (!wanted || !API.countrySelect) return;
+      const opt = Array.from(API.countrySelect.options).find(
+        (o) => o.value.toLowerCase() === wanted.trim().toLowerCase()
+      );
+      if (!opt) return;
+      const apply = () => {
+        API.countrySelect.value = opt.value;
+        API.countrySelect.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      if (API.map && typeof API.map.loaded === "function" && API.map.loaded()) {
+        apply();
+      } else if (API.map && typeof API.map.once === "function") {
+        API.map.once("load", apply);
+      } else {
+        apply();
+      }
+    })();
   });
 })();
