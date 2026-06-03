@@ -254,14 +254,20 @@ def index(request: HttpRequest) -> HttpResponse:
         {
             "id": "zaf-irrigation",
             "icon": "bi-calendar3",
-            "title": "South Africa — monthly irrigation in former homelands",
+            "title": "South Africa — irrigation & crop water use in former homelands",
             "desc": (
-                "Sentinel-2 + Dynamic World irrigation masks across pre-1994 "
-                "homeland boundaries. Track seasonal change district-by-district."
+                "Sentinel-2 + Dynamic World irrigation masks plus WaPOR crop "
+                "water use (evapotranspiration) at 20 m, mapped across pre-1994 "
+                "homeland boundaries for July 2025."
             ),
             "countries": ["South Africa"],
-            "sample": ["Filtered band", "Probability band", "Raw band", "Homeland boundaries"],
-            "count": len(irrigation),
+            "sample": [
+                "Irrigated area — filtered / probability / raw",
+                "Crop water use — WaPOR ET (dekadal)",
+                "Per-homeland boundaries",
+            ],
+            "count": len([l for l in LAYERS
+                          if l.get("ic_kind") in ("irrigation", "wapor")]),
             "coming_soon": False,
         },
         {

@@ -106,13 +106,24 @@
               </div>
 
               <div class="carousel-item">
-                <img src="{% url 'mapviewer:gee_thumbnail' %}?dataset=IRR_SA_2024-09%3Ffiltered"
-                     class="lp-compare-img"
-                     alt="Monthly irrigated extent · South Africa (Sep 2024)"
+                <img src="{% static 'mapviewer/sa_irrigation_real.png' %}"
+                     class="lp-compare-img lp-compare-img--cover"
+                     alt="Irrigation classification (green) over Sentinel-2 · South Africa, July 2025"
                      loading="lazy"/>
                 <figcaption class="lp-hero-caption">
                   <span class="lp-hero-caption-dot"></span>
                   Monthly irrigation · South Africa
+                </figcaption>
+              </div>
+
+              <div class="carousel-item">
+                <img src="{% static 'mapviewer/sa_wapor_real.png' %}"
+                     class="lp-compare-img lp-compare-img--cover"
+                     alt="WaPOR crop water use (evapotranspiration) over Sentinel-2 · South Africa, July 2025"
+                     loading="lazy"/>
+                <figcaption class="lp-hero-caption">
+                  <span class="lp-hero-caption-dot"></span>
+                  Crop water use (WaPOR ET) · South Africa
                 </figcaption>
               </div>
 
@@ -161,6 +172,8 @@
                       data-bs-slide-to="2" aria-label="Slide 3"></button>
               <button type="button" data-bs-target="#lpHeroCarousel"
                       data-bs-slide-to="3" aria-label="Slide 4"></button>
+              <button type="button" data-bs-target="#lpHeroCarousel"
+                      data-bs-slide-to="4" aria-label="Slide 5"></button>
             </div>
           </div>
         </figure>
