@@ -47,6 +47,13 @@
     return "Choose a country and map layer, then draw an area or click a boundary to run analysis.";
   }
 
+  // Show/hide the bordered chart card so we never display an empty box
+  // (e.g. irrigation/WaPOR analyses produce a table but no bar chart).
+  function setCardHidden(container, hidden) {
+    const card = container && container.closest(".iv-chart-card");
+    if (card) card.classList.toggle("is-hidden", !!hidden);
+  }
+
   function renderEmpty(container) {
     container.innerHTML = "";
     const empty = document.createElement("div");
@@ -54,6 +61,7 @@
     empty.setAttribute("data-i18n", "chart_empty");
     empty.textContent = emptyMessage();
     container.appendChild(empty);
+    setCardHidden(container, true);
   }
 
   const IrrChart = {
@@ -66,6 +74,7 @@
         renderEmpty(container);
         return;
       }
+      setCardHidden(container, false);  // there's data — reveal the chart card
 
       const max = Math.max(...visible.map((it) => Number(it.area_ha) || 0));
       container.innerHTML = "";

@@ -1620,6 +1620,11 @@ button.map-basemap-toggle {
   padding: .65rem .75rem;
   min-height: 200px;
 }
+/* Hidden when there's no chart to show (e.g. irrigation/WaPOR table-only
+   results) so we never render an empty bordered box. */
+.iv-chart-card.is-hidden {
+  display: none;
+}
 
 /* ---------- Map control unification ----------
    Single source of truth for the floating panels: same translucent slate,
