@@ -496,6 +496,16 @@
     _saveOverlayOrder();
     updateLayerZOrder();
     _syncAllOrderControls();
+    // Feedback — name the overlay that's now on top (the visual change can be
+    // subtle when the two rasters only overlap in places).
+    try {
+      const topId = _activeOverlayIds()[0];
+      const cb = document.querySelector(`input[name="layer"][data-id="${topId}"]`);
+      const leaf = cb && cb.closest(".layer-leaf-with-picker, .layer-leaf, label");
+      const lblEl = leaf && leaf.querySelector(".layer-label");
+      const lbl = lblEl && lblEl.textContent.trim();
+      if (lbl) setStatus(`“${lbl}” is now on top.`, false);
+    } catch (_) { /* feedback is best-effort */ }
   }
 
   // Inject ↑/↓ stacking controls into a raster overlay's sidebar row.
@@ -507,7 +517,12 @@
     }
     const cb = document.querySelector(`input[name="layer"][data-id="${id}"]`);
     if (!cb) return;
-    const row = cb.closest(".layer-leaf, .layer-leaf-with-picker, .form-check, label");
+    // Prefer the outer picker container so the arrows sit OUTSIDE the <label>
+    // (arrows inside a label would toggle the layer when clicked, and sit in
+    // the wrong place). Fall back to the leaf/label for simple rows.
+    const row = cb.closest(".layer-leaf-with-picker")
+      || cb.closest(".layer-leaf")
+      || cb.closest(".form-check, label");
     if (!row) return;
     if (row.querySelector(`.layer-order-control[data-for="${id}"]`)) {
       _syncAllOrderControls();
