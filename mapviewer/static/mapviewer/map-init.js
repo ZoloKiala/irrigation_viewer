@@ -41,11 +41,9 @@
       const msg = err ? String(err.message || err) : "";
       const status = err && (err.status || err.statusCode);
       if (status === 429 || /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msg)) {
+        // EE quota/rate-limit errors are transient and self-recover; just hide
+        // the spinner and stay silent (don't surface a message to the user).
         if (API.hideMapSpinner) API.hideMapSpinner();
-        API.setStatus(
-          "Earth Engine quota/rate limit hit. Wait a minute, then turn the layer on again.",
-          true
-        );
       }
     });
 
@@ -426,10 +424,8 @@
         err.statusCode === 429 ||
         /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msgText);
       if (isEarthEngineTile && isRateLimit) {
-        API.setStatus(
-          "Earth Engine quota/rate limit hit. Wait a minute, then turn the layer on again.",
-          true
-        );
+        // Transient EE quota/rate-limit on a tile fetch — hide the spinner and
+        // stay silent rather than showing an error message.
         API.hideMapSpinner();
         return;
       }
