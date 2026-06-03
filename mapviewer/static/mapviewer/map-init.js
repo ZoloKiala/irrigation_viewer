@@ -9,28 +9,78 @@
   const _t = (key, fallback) =>
     typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
 
+  // Render an actionable message in the map container when the map can't be
+  // created (WebGL unavailable / MapLibre blocked) — beats a silent blank map.
+  function _showMapUnavailable(mapEl, why) {
+    if (!mapEl) return;
+    mapEl.innerHTML =
+      '<div style="position:absolute;inset:0;display:flex;align-items:center;' +
+      'justify-content:center;padding:2rem;text-align:center;color:#cbd5e1;' +
+      'background:#020617;font:14px/1.55 system-ui,-apple-system,sans-serif;z-index:5;">' +
+      '<div><div style="font-size:1.05rem;font-weight:600;margin-bottom:.5rem;">' +
+      'Map can’t be displayed in this browser</div><div>' + why + '</div></div></div>';
+    if (API.setStatus) {
+      API.setStatus("Map unavailable in this browser (WebGL or map library blocked).", true);
+    }
+  }
+
   function initMap() {
     const mapEl = API.mapEl;
     if (!mapEl) return;
 
-    const map = new maplibregl.Map({
-      container: mapEl,
-      style: {
-        version: 8,
-        sources: {},
-        layers: [
-          {
-            id: "background",
-            type: "background",
-            paint: {
-              "background-color": "#020617",
+    // The map needs MapLibre (loaded from a CDN) + WebGL. Surface a clear
+    // message if either is missing — common in Chrome when hardware
+    // acceleration is off or an extension blocks unpkg.com. (Edge often has
+    // hardware acceleration on by default, which is why it can differ.)
+    if (typeof maplibregl === "undefined") {
+      _showMapUnavailable(mapEl,
+        "The map library failed to load — a browser extension (ad/script blocker) " +
+        "or your network may be blocking unpkg.com. Allow it for this site and reload.");
+      return;
+    }
+    const webglAvailable = (() => {
+      try {
+        const c = document.createElement("canvas");
+        return !!(window.WebGLRenderingContext &&
+          (c.getContext("webgl2") || c.getContext("webgl") ||
+           c.getContext("experimental-webgl")));
+      } catch (_) { return false; }
+    })();
+    if (!webglAvailable) {
+      _showMapUnavailable(mapEl,
+        "WebGL isn’t available. In Chrome: Settings → System → enable “Use graphics " +
+        "acceleration when available”, relaunch Chrome, then reload. " +
+        "(Visit chrome://gpu — WebGL should read “Hardware accelerated”.)");
+      return;
+    }
+
+    let map;
+    try {
+      map = new maplibregl.Map({
+        container: mapEl,
+        style: {
+          version: 8,
+          sources: {},
+          layers: [
+            {
+              id: "background",
+              type: "background",
+              paint: {
+                "background-color": "#020617",
+              },
             },
-          },
-        ],
-      },
-      center: [30.9, -19.0],
-      zoom: 6.3,
-    });
+          ],
+        },
+        center: [30.9, -19.0],
+        zoom: 6.3,
+      });
+    } catch (err) {
+      console.error("MapLibre failed to initialize:", err);
+      _showMapUnavailable(mapEl,
+        "The map engine failed to start (WebGL error). Enable hardware acceleration " +
+        "and reload, or try a different browser.");
+      return;
+    }
 
     API.map = map;
     window.map = map; // optional external access
