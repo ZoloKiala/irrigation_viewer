@@ -90,9 +90,10 @@
       const err = e && e.error ? e.error : null;
       const msg = err ? String(err.message || err) : "";
       const status = err && (err.status || err.statusCode);
-      if (status === 429 || /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msg)) {
-        // EE quota/rate-limit errors are transient and self-recover; just hide
-        // the spinner and stay silent (don't surface a message to the user).
+      // Transient EE errors — rate limit (429) or service errors (5xx, e.g.
+      // 503 when the project is throttled). Self-recover; hide spinner, no msg.
+      if (status === 429 || (status >= 500 && status <= 599) ||
+          /(^|\D)(429|5\d\d)(\D|$)|too many requests|quota|restricted mode/i.test(msg)) {
         if (API.hideMapSpinner) API.hideMapSpinner();
       }
     });
@@ -469,13 +470,14 @@
       const isEarthEngineTile =
         /earthengine\.googleapis\.com/i.test(String(err.url || "")) ||
         /earthengine/i.test(msgText);
-      const isRateLimit =
-        err.status === 429 ||
-        err.statusCode === 429 ||
-        /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msgText);
-      if (isEarthEngineTile && isRateLimit) {
-        // Transient EE quota/rate-limit on a tile fetch — hide the spinner and
-        // stay silent rather than showing an error message.
+      const status = err.status || err.statusCode || 0;
+      const isTransientEE =
+        status === 429 || (status >= 500 && status <= 599) ||
+        /(^|\D)(429|5\d\d)(\D|$)|too many requests|quota|restricted mode|service unavailable/i.test(msgText);
+      if (isEarthEngineTile && isTransientEE) {
+        // Transient EE error on a tile fetch (rate limit / 5xx — e.g. the 503
+        // you get under restricted quota). Hide the spinner and stay silent
+        // rather than showing a raw "AJAXError (503)".
         API.hideMapSpinner();
         return;
       }
