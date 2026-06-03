@@ -368,6 +368,17 @@
   }
 
   // ------------------------- LAYER Z-ORDER -------------------------
+  // User-controlled stacking order for raster overlays (irrigation / WaPOR /
+  // suitability). Array of map-layer ids, index 0 = TOP-most. Persisted so the
+  // chosen order survives reloads. The ↑/↓ controls injected per active layer
+  // reorder this; updateLayerZOrder() honours it.
+  const _OVERLAY_ORDER_KEY = "iv:overlay-order";
+  let _overlayOrder = [];
+  try {
+    const _raw = localStorage.getItem(_OVERLAY_ORDER_KEY);
+    if (_raw) _overlayOrder = JSON.parse(_raw) || [];
+  } catch (_) { _overlayOrder = []; }
+
   function updateLayerZOrder() {
     const map = API.map;
     if (!map) return;
@@ -402,6 +413,17 @@
       }
     });
 
+    // Apply the user's chosen stacking for tracked raster overlays (index 0 =
+    // top). Untracked layers (e.g. boundary lines) sort to the top as before.
+    layerIds.sort((a, b) => {
+      const ia = _overlayOrder.indexOf(a);
+      const ib = _overlayOrder.indexOf(b);
+      if (ia === -1 && ib === -1) return 0;   // both untracked: keep DOM order
+      if (ia === -1) return -1;
+      if (ib === -1) return 1;
+      return ia - ib;                          // tracked: lower index = higher
+    });
+
     for (let i = layerIds.length - 1; i >= 0; i--) {
       const lid = layerIds[i];
       if (map.getLayer(lid)) map.moveLayer(lid);
@@ -428,6 +450,98 @@
       // ignore
     }
   }
+
+  function _saveOverlayOrder() {
+    try { localStorage.setItem(_OVERLAY_ORDER_KEY, JSON.stringify(_overlayOrder)); } catch (_) {}
+  }
+
+  // Overlay ids currently on the map, in stacking order (index 0 = top).
+  function _activeOverlayIds() {
+    const map = API.map;
+    if (!map) return [];
+    return _overlayOrder.filter((lid) => map.getLayer(lid));
+  }
+
+  // Enable/disable a control's arrows based on this layer's position among the
+  // currently-active overlays.
+  function _syncOrderControl(wrap) {
+    const id = wrap.dataset.for;
+    const active = _activeOverlayIds();
+    const pos = active.indexOf(id);
+    const up = wrap.querySelector(".layer-order-up");
+    const down = wrap.querySelector(".layer-order-down");
+    if (up) up.disabled = pos <= 0;                        // already on top / alone
+    if (down) down.disabled = pos === -1 || pos >= active.length - 1;
+    // Hide entirely when there's nothing to reorder against.
+    wrap.style.display = active.length > 1 ? "" : "none";
+  }
+
+  function _syncAllOrderControls() {
+    document.querySelectorAll(".layer-order-control").forEach(_syncOrderControl);
+  }
+
+  // dir: -1 = move up (toward top), +1 = move down (toward bottom). Moves
+  // relative to the nearest *active* overlay so inactive layers don't block.
+  function _moveOverlay(id, dir) {
+    const active = _activeOverlayIds();
+    const pos = active.indexOf(id);
+    if (pos < 0) return;
+    const swapPos = pos + dir;
+    if (swapPos < 0 || swapPos >= active.length) return;
+    const otherId = active[swapPos];
+    const i = _overlayOrder.indexOf(id);
+    const j = _overlayOrder.indexOf(otherId);
+    if (i < 0 || j < 0) return;
+    [_overlayOrder[i], _overlayOrder[j]] = [_overlayOrder[j], _overlayOrder[i]];
+    _saveOverlayOrder();
+    updateLayerZOrder();
+    _syncAllOrderControls();
+  }
+
+  // Inject ↑/↓ stacking controls into a raster overlay's sidebar row.
+  function attachLayerOrderControls(id) {
+    if (!id) return;
+    if (!_overlayOrder.includes(id)) {
+      _overlayOrder.unshift(id);   // newly added overlay starts on top
+      _saveOverlayOrder();
+    }
+    const cb = document.querySelector(`input[name="layer"][data-id="${id}"]`);
+    if (!cb) return;
+    const row = cb.closest(".layer-leaf, .layer-leaf-with-picker, .form-check, label");
+    if (!row) return;
+    if (row.querySelector(`.layer-order-control[data-for="${id}"]`)) {
+      _syncAllOrderControls();
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "layer-order-control";
+    wrap.dataset.for = id;
+    wrap.innerHTML = `
+      <button type="button" class="layer-order-up" title="Move this layer above the other" aria-label="Move layer up">▲</button>
+      <button type="button" class="layer-order-down" title="Move this layer below the other" aria-label="Move layer down">▼</button>
+    `;
+    row.appendChild(wrap);
+    wrap.querySelector(".layer-order-up").addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation(); _moveOverlay(id, -1);
+    });
+    wrap.querySelector(".layer-order-down").addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation(); _moveOverlay(id, +1);
+    });
+    _syncAllOrderControls();
+  }
+
+  function detachLayerOrderControls(id) {
+    const el = document.querySelector(`.layer-order-control[data-for="${id}"]`);
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    _syncAllOrderControls();
+  }
+
+  // Raster overlays announce themselves via iv:layer-added — attach controls.
+  document.addEventListener("iv:layer-added", (e) => {
+    if (e.detail && e.detail.type === "raster" && e.detail.id) {
+      attachLayerOrderControls(e.detail.id);
+    }
+  });
 
   // ------------------------- MAP SPINNER HELPERS -------------------------
   function showMapSpinner(message) {
@@ -523,6 +637,7 @@
     if (!map || !id) return;
     if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(id)) map.removeSource(id);
+    detachLayerOrderControls(id);
     updateLayerZOrder();
   }
 
