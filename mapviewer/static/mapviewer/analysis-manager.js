@@ -493,6 +493,11 @@
     }
 
     renderIrrigationAnalysis(label, items, meta) {
+      // Irrigation/WaPOR results are a table, not a bar chart — clear the
+      // chart so its card hides instead of showing an empty box below.
+      if (window.IrrChart && typeof window.IrrChart.clear === "function") {
+        window.IrrChart.clear();
+      }
       const fmt = (n) => (Number(n) || 0).toLocaleString(undefined, {
         maximumFractionDigits: 1,
       });

@@ -90,9 +90,10 @@
       const err = e && e.error ? e.error : null;
       const msg = err ? String(err.message || err) : "";
       const status = err && (err.status || err.statusCode);
-      if (status === 429 || /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msg)) {
-        // EE quota/rate-limit errors are transient and self-recover; just hide
-        // the spinner and stay silent (don't surface a message to the user).
+      // Transient EE errors — rate limit (429) or service errors (5xx, e.g.
+      // 503 when the project is throttled). Self-recover; hide spinner, no msg.
+      if (status === 429 || (status >= 500 && status <= 599) ||
+          /(^|\D)(429|5\d\d)(\D|$)|too many requests|quota|restricted mode/i.test(msg)) {
         if (API.hideMapSpinner) API.hideMapSpinner();
       }
     });
@@ -461,6 +462,37 @@
       // the Clear button.)
     }
 
+    // Automatic retry for transient EE tile failures (429/5xx). Re-fetches the
+    // affected source's tiles a few times with exponential backoff; the counter
+    // resets once the source loads cleanly, so steady-state load isn't retried.
+    const _tileRetry = {};
+    const _TILE_MAX_RETRY = 3;
+    const _scheduleTileRetry = (sourceId) => {
+      if (!sourceId) return;
+      const st = _tileRetry[sourceId] ||
+        (_tileRetry[sourceId] = { attempts: 0, timer: null });
+      if (st.attempts >= _TILE_MAX_RETRY || st.timer) return; // capped / pending
+      st.attempts += 1;
+      const delay = Math.min(8000, 1000 * Math.pow(2, st.attempts)); // 2s,4s,8s
+      st.timer = setTimeout(() => {
+        st.timer = null;
+        try {
+          const src = map.getSource(sourceId);
+          const styleSources = (map.getStyle && map.getStyle().sources) || {};
+          const tiles = styleSources[sourceId] && styleSources[sourceId].tiles;
+          if (src && typeof src.setTiles === "function" && tiles) {
+            src.setTiles(tiles); // force a re-fetch of this source's tiles
+          }
+        } catch (_) { /* source was removed */ }
+      }, delay);
+    };
+    map.on("sourcedata", (e) => {
+      if (e && e.sourceId && e.isSourceLoaded && _tileRetry[e.sourceId]) {
+        if (_tileRetry[e.sourceId].timer) clearTimeout(_tileRetry[e.sourceId].timer);
+        delete _tileRetry[e.sourceId]; // loaded OK — clear the retry state
+      }
+    });
+
     map.on("error", (e) => {
       if (!e || !e.error || !e.error.url) return;
       console.error("Map error", e);
@@ -469,14 +501,16 @@
       const isEarthEngineTile =
         /earthengine\.googleapis\.com/i.test(String(err.url || "")) ||
         /earthengine/i.test(msgText);
-      const isRateLimit =
-        err.status === 429 ||
-        err.statusCode === 429 ||
-        /(^|\D)429(\D|$)|too many requests|quota|restricted mode/i.test(msgText);
-      if (isEarthEngineTile && isRateLimit) {
-        // Transient EE quota/rate-limit on a tile fetch — hide the spinner and
-        // stay silent rather than showing an error message.
+      const status = err.status || err.statusCode || 0;
+      const isTransientEE =
+        status === 429 || (status >= 500 && status <= 599) ||
+        /(^|\D)(429|5\d\d)(\D|$)|too many requests|quota|restricted mode|service unavailable/i.test(msgText);
+      if (isEarthEngineTile && isTransientEE) {
+        // Transient EE error on a tile fetch (rate limit / 5xx — e.g. the 503
+        // you get under restricted quota). Hide the spinner, stay silent, and
+        // quietly retry the source's tiles a few times with backoff.
         API.hideMapSpinner();
+        _scheduleTileRetry(e.sourceId);
         return;
       }
       const msg = `Tile error: ${e.error.message || ""}`;
