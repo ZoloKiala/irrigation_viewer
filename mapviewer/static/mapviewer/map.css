@@ -1669,7 +1669,7 @@ button.map-basemap-toggle {
 /* ---------- Tweaks FAB + panel ---------- */
 .tweaks-toggle {
   position: absolute;
-  top: 9.6rem; /* directly below the basemap toggle (top: 6.5rem + 30px + gap) */
+  top: 6.5rem; /* moved up into the slot vacated by the removed basemap toggle */
   right: .45rem;
   z-index: 13;
   width: 36px;
@@ -1702,14 +1702,14 @@ button.map-basemap-toggle {
 }
 
 @media (max-width: 768px) {
-  .tweaks-toggle { right: .45rem; top: 9.6rem; }
+  .tweaks-toggle { right: .45rem; top: 6.5rem; }
 }
 
 .tweaks-panel {
   /* Anchored to the right edge from top, mirrors the basemap popup
      pattern. Capped height so all 5 sections scroll inside. */
   position: absolute;
-  top: 9.1rem;
+  top: 6.0rem;
   right: 3.1rem;
   z-index: 14;
   width: 300px;
