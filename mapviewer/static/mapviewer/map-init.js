@@ -332,6 +332,15 @@
 
       const _showPopupForFeature = (feature, lngLat) => {
         if (!feature || !feature.geometry) return;
+        // Only open the popup once drawing is actually finished. While a
+        // polygon is in progress the draw tool is still in a *_draw_* mode
+        // (e.g. "draw_polygon"); any event that fires mid-draw must not pop
+        // the analysis dialog. The draw.create handler resets the mode to
+        // simple_select before calling this, so genuine finalization passes.
+        try {
+          const m = draw && typeof draw.getMode === "function" ? draw.getMode() : "";
+          if (typeof m === "string" && m.indexOf("draw_") === 0) return;
+        } catch (_) { /* if mode can't be read, fall through */ }
         let pos = _validPos(lngLat) ? lngLat : null;
         // Try turf centroid first.
         if (!pos && typeof turf !== "undefined") {
