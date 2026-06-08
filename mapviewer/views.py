@@ -1804,26 +1804,51 @@ def wapor_timeseries(request: HttpRequest) -> JsonResponse:
             vals = a[valid].astype("float32")
             return vals, int(vals.size)
 
+    def _wapor_tif_candidates(dekad_date: str):
+        """Yield local WaPOR rasters to try for a date, most specific first.
+
+        The viewer has a merged top-level mosaic, but the homeland workflow also
+        keeps clipped rasters in out/wapor/<homeland>/.  Boundary polygons can
+        miss valid cells in the merged/cropland-masked product, so try the
+        region rasters and their pre-mask/raw backups before reporting no data.
+        """
+        seen = set()
+
+        def add(path: Path, source: str):
+            if path in seen or not path.exists():
+                return
+            seen.add(path)
+            candidates.append((path, source))
+
+        candidates = []
+        top = _WAPOR_LOCAL_ROOT / f"wapor_{dekad_date}.tif"
+        add(top, "merged_cropland_masked")
+        add(top.with_suffix(".pre-mask.tif"), "merged_unmasked_pre_mask")
+        add(top.with_suffix(".raw.tif"), "merged_unmasked_raw")
+        add(top.with_suffix(".chunked-backup.tif"), "merged_chunked_backup")
+
+        for region_dir in sorted(p for p in _WAPOR_LOCAL_ROOT.iterdir() if p.is_dir()):
+            tif = region_dir / f"wapor_{dekad_date}.tif"
+            region = region_dir.name
+            add(tif, f"{region}_cropland_masked")
+            add(tif.with_suffix(".pre-mask.tif"), f"{region}_unmasked_pre_mask")
+            add(tif.with_suffix(".raw.tif"), f"{region}_unmasked_raw")
+            add(tif.with_suffix(".chunked-backup.tif"), f"{region}_chunked_backup")
+        return candidates
+
     for dekad_key, dekad_date in dekad_items:
-        tif = _WAPOR_LOCAL_ROOT / f"wapor_{dekad_date}.tif"
-        if not tif.exists():
+        candidates = _wapor_tif_candidates(dekad_date)
+        if not candidates:
             continue
         try:
-            vals, n_pixels = _stats_for_tif(tif)
-            source = "cropland_masked"
-            if vals is None:
-                fallback_candidates = [
-                    (tif.with_suffix(".pre-mask.tif"), "unmasked_pre_mask"),
-                    (tif.with_suffix(".raw.tif"), "unmasked_raw"),
-                    (tif.with_suffix(".chunked-backup.tif"), "unmasked_chunked_backup"),
-                ]
-                for fallback_tif, fallback_source in fallback_candidates:
-                    if not fallback_tif.exists():
-                        continue
-                    vals, n_pixels = _stats_for_tif(fallback_tif)
-                    if vals is not None:
-                        source = fallback_source
-                        break
+            vals = None
+            n_pixels = 0
+            source = None
+            for tif, candidate_source in candidates:
+                vals, n_pixels = _stats_for_tif(tif)
+                if vals is not None:
+                    source = candidate_source
+                    break
             if vals is None:
                 items.append({
                     "dekad": dekad_key,
@@ -1840,10 +1865,10 @@ def wapor_timeseries(request: HttpRequest) -> JsonResponse:
                 "mean_eta": round(float(vals.mean()), 2),
                 "std_eta": round(float(vals.std()), 2),
                 "min_eta": round(float(vals.min()), 2),
-                "max_eta": round(float(vals.max()), 2),
-                "n_pixels": n_pixels,
-                "source": source,
-            })
+                    "max_eta": round(float(vals.max()), 2),
+                    "n_pixels": n_pixels,
+                    "source": source,
+                })
         except Exception as e:  # noqa: BLE001
             items.append({
                 "dekad": dekad_key,
