@@ -1836,39 +1836,61 @@ def wapor_timeseries(request: HttpRequest) -> JsonResponse:
             add(tif.with_suffix(".chunked-backup.tif"), f"{region}_chunked_backup")
         return candidates
 
+    def _stats_from_ee(dekad_date: str):
+        """Compute WaPOR ETa stats inside ``geometry`` from the EE mosaic asset.
+
+        The deployed app ships only the Earth Engine assets
+        (``projects/tethys-app-1/assets/wapor_<dekad_date>``) -- the local
+        out/wapor/*.tif rasters aren't present on the server -- so when no
+        local candidate yields pixels we reduce the EE mosaic over the polygon
+        instead. Returns (stats_dict, n_pixels) or (None, 0).
+        """
+        import ee  # type: ignore
+
+        asset_id = f"{_WAPOR_ASSET_PREFIX}{dekad_date}"
+        img = ee.Image(asset_id).select(0)
+        # Same masking the tile endpoint applies: drop NoData (-9999) and any
+        # non-positive cells so they don't poison the statistics.
+        img = img.updateMask(img.neq(-9999).And(img.gt(0)))
+        eta = img.rename("eta")
+        region = ee.Geometry(geometry)
+        scale = ee.Number(img.projection().nominalScale()).max(20)
+        reducer = (
+            ee.Reducer.mean()
+            .combine(ee.Reducer.stdDev(), sharedInputs=True)
+            .combine(ee.Reducer.minMax(), sharedInputs=True)
+            .combine(ee.Reducer.count(), sharedInputs=True)
+        )
+        stats = eta.reduceRegion(
+            reducer=reducer,
+            geometry=region,
+            scale=scale,
+            maxPixels=1e10,
+            bestEffort=True,
+            tileScale=4,
+        ).getInfo() or {}
+        n = int(stats.get("eta_count") or 0)
+        if n <= 0:
+            return None, 0
+        return {
+            "mean": stats.get("eta_mean"),
+            "std": stats.get("eta_stdDev"),
+            "min": stats.get("eta_min"),
+            "max": stats.get("eta_max"),
+        }, n
+
+    ee_ready = None  # lazily initialise EE only if a local lookup comes up empty
+
     for dekad_key, dekad_date in dekad_items:
-        candidates = _wapor_tif_candidates(dekad_date)
-        if not candidates:
-            continue
+        vals = None
+        n_pixels = 0
+        source = None
         try:
-            vals = None
-            n_pixels = 0
-            source = None
-            for tif, candidate_source in candidates:
+            for tif, candidate_source in _wapor_tif_candidates(dekad_date):
                 vals, n_pixels = _stats_for_tif(tif)
                 if vals is not None:
                     source = candidate_source
                     break
-            if vals is None:
-                items.append({
-                    "dekad": dekad_key,
-                    "dekad_date": dekad_date,
-                    "mean_eta": None,
-                    "std_eta": None,
-                    "n_pixels": 0,
-                    "message": "No WaPOR pixels inside the selected polygon for this date.",
-                })
-                continue
-            items.append({
-                "dekad": dekad_key,
-                "dekad_date": dekad_date,
-                "mean_eta": round(float(vals.mean()), 2),
-                "std_eta": round(float(vals.std()), 2),
-                "min_eta": round(float(vals.min()), 2),
-                    "max_eta": round(float(vals.max()), 2),
-                    "n_pixels": n_pixels,
-                    "source": source,
-                })
         except Exception as e:  # noqa: BLE001
             items.append({
                 "dekad": dekad_key,
@@ -1876,6 +1898,51 @@ def wapor_timeseries(request: HttpRequest) -> JsonResponse:
                 "mean_eta": None,
                 "error": str(e),
             })
+            continue
+
+        if vals is not None:
+            items.append({
+                "dekad": dekad_key,
+                "dekad_date": dekad_date,
+                "mean_eta": round(float(vals.mean()), 2),
+                "std_eta": round(float(vals.std()), 2),
+                "min_eta": round(float(vals.min()), 2),
+                "max_eta": round(float(vals.max()), 2),
+                "n_pixels": n_pixels,
+                "source": source,
+            })
+            continue
+
+        # No local pixels (typical on the deployed server, which has no local
+        # rasters) -- fall back to the Earth Engine WaPOR mosaic asset.
+        if ee_ready is None:
+            ee_ready = _init_ee()
+        if ee_ready:
+            try:
+                ee_stats, n_pixels = _stats_from_ee(dekad_date)
+            except Exception as e:  # noqa: BLE001
+                ee_stats, n_pixels = None, 0
+            if ee_stats is not None and n_pixels > 0:
+                items.append({
+                    "dekad": dekad_key,
+                    "dekad_date": dekad_date,
+                    "mean_eta": round(float(ee_stats["mean"]), 2) if ee_stats["mean"] is not None else None,
+                    "std_eta": round(float(ee_stats["std"]), 2) if ee_stats["std"] is not None else None,
+                    "min_eta": round(float(ee_stats["min"]), 2) if ee_stats["min"] is not None else None,
+                    "max_eta": round(float(ee_stats["max"]), 2) if ee_stats["max"] is not None else None,
+                    "n_pixels": n_pixels,
+                    "source": "ee_asset",
+                })
+                continue
+
+        items.append({
+            "dekad": dekad_key,
+            "dekad_date": dekad_date,
+            "mean_eta": None,
+            "std_eta": None,
+            "n_pixels": 0,
+            "message": "No WaPOR pixels inside the selected polygon for this date.",
+        })
 
     # Sort by dekad_date (chronological)
     items.sort(key=lambda x: x.get("dekad_date") or "")
