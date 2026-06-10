@@ -9,6 +9,13 @@
   const _t = (key, fallback) =>
     typeof window.ivT === "function" ? window.ivT(key, fallback) : fallback;
 
+  // Shared per-polygon colours so "Polygon N" is the same colour across the
+  // crop-water-use chart and the irrigated-area comparison.
+  const POLY_PALETTE = [
+    "#22d3ee", "#f59e0b", "#34d399", "#f472b6",
+    "#a78bfa", "#60a5fa", "#fb7185", "#facc15",
+  ];
+
   // ----------------- Socio-economic config (from your matrix) -----------------
   // One entry per row in the spreadsheet
   const SOCIO_INDICATORS = [
@@ -199,13 +206,8 @@
         document.querySelectorAll('input[name="layer"][type="checkbox"]:checked')
       ).find((cb) => (cb.value || "").startsWith("WAPOR_SA_"));
       if (waporCb) {
-        const fc = this.draw && this.draw.getAll ? this.draw.getAll() : null;
-        if (!fc || !fc.features || !fc.features.length) {
-          this.setStatus(_t("status_draw_polygon_first", "Draw a polygon first."), true);
-          return;
-        }
-        const geom = fc.features[fc.features.length - 1].geometry;
-        return this.runFreehandWaporTimeseries(geom);
+        // Chart every drawn polygon together (supports 3+), not just the last.
+        return this.runMultiWaporTimeseries();
       }
 
       if (!this.currentSuitability) {
@@ -541,29 +543,204 @@
       }
     }
 
+    // ----------------- Multi-polygon irrigated-area analysis -----------------
+    // Run the irrigated-area (ha) analysis for EVERY drawn polygon and show a
+    // comparison (bar chart + table). One polygon → original single table.
+    async runMultiIrrigationAnalysis() {
+      const fc = this.draw && this.draw.getAll ? this.draw.getAll() : null;
+      const polys = (fc && fc.features ? fc.features : []).filter(
+        (f) =>
+          f && f.geometry &&
+          (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon")
+      );
+      if (!polys.length) {
+        this.setStatus(_t("status_draw_polygon_first", "Draw a polygon first."), true);
+        return;
+      }
+
+      // Resolve the active SA irrigation layer (period + band) from the checkboxes.
+      const irrCb = Array.from(
+        document.querySelectorAll('input[name="layer"][type="checkbox"]:checked')
+      ).find((cb) => (cb.value || "").startsWith("IRR_SA_"));
+      if (!irrCb) {
+        this.setStatus("Enable a South Africa irrigation layer (monthly) first.", true);
+        this.setAnalysisHtml(
+          "<em>Enable the 'South Africa — Irrigation (monthly)' layer, pick a period and band, then run the analysis.</em>"
+        );
+        return;
+      }
+      const mm = (irrCb.value || "").match(/^IRR_SA_([^?]+)\?(.+)$/);
+      if (!mm) {
+        this.setStatus("Could not parse irrigation layer selection.", true);
+        return;
+      }
+      const isoPeriod = mm[1];
+      const band = mm[2];
+
+      try {
+        this.setStatus(
+          polys.length === 1
+            ? "Running irrigated-area analysis…"
+            : `Running irrigated-area analysis on ${polys.length} polygons…`,
+          false
+        );
+        const results = await Promise.all(
+          polys.map((f, idx) =>
+            fetch("/api/gee/analyze-irrigation/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ geometry: f.geometry, iso_period: isoPeriod, band }),
+            })
+              .then((r) => (r.ok ? r.json() : { items: [] }))
+              .then((data) => {
+                const items = Array.isArray(data.items) ? data.items : [];
+                const totalItem = items.find((it) => /total/i.test(it.label || ""));
+                const irrItem = items.find((it) => !/total/i.test(it.label || ""));
+                return {
+                  label: `Polygon ${idx + 1}`,
+                  color: POLY_PALETTE[idx % POLY_PALETTE.length],
+                  items,
+                  irr_ha: irrItem ? Number(irrItem.area_ha) || 0 : 0,
+                  total_ha: totalItem ? Number(totalItem.area_ha) || 0 : 0,
+                  share: irrItem ? Number(irrItem.share_pct) || 0 : 0,
+                  meta: {
+                    iso_period: data.iso_period || isoPeriod,
+                    band: data.band || band,
+                    threshold: data.threshold,
+                  },
+                };
+              })
+              .catch((e) => {
+                console.error("Irrigation analysis failed for one polygon", e);
+                return null;
+              })
+          )
+        );
+        const valid = results.filter((r) => r && r.total_ha > 0);
+        if (!valid.length) {
+          this.setAnalysisHtml(
+            "<em>No irrigation data inside the drawn polygon(s) for the selected period.</em>"
+          );
+          this.setStatus("No irrigation data inside polygons.", true);
+          return;
+        }
+        if (valid.length === 1) {
+          this.renderIrrigationAnalysis(valid[0].label, valid[0].items, valid[0].meta);
+        } else {
+          this.renderIrrigationMulti(valid, valid[0].meta);
+        }
+        this.setStatus(
+          `Irrigated-area analysis complete (${valid.length} of ${polys.length} polygons).`,
+          false
+        );
+      } catch (err) {
+        console.error("Multi irrigation analysis failed", err);
+        this.setStatus("Irrigation analysis failed.", true);
+      }
+    }
+
+    renderIrrigationMulti(results, meta) {
+      // Comparison view is its own table/bar chart — clear the bar-chart canvas.
+      if (window.IrrChart && typeof window.IrrChart.clear === "function") {
+        window.IrrChart.clear();
+      }
+      const fmt = (n) =>
+        (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
+      const maxIrr = Math.max(1, ...results.map((r) => r.irr_ha));
+
+      const bars = results
+        .map((r) => {
+          const w = Math.max(2, (r.irr_ha / maxIrr) * 100);
+          return `
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="small text-nowrap" style="width:64px">${r.label}</span>
+              <div style="flex:1;background:rgba(148,163,184,.15);border-radius:4px;height:16px">
+                <div style="width:${w}%;background:${r.color};height:100%;border-radius:4px"></div>
+              </div>
+              <span class="small text-nowrap" style="width:118px;text-align:right">
+                ${fmt(r.irr_ha)} ha · ${fmt(r.share)}%
+              </span>
+            </div>`;
+        })
+        .join("");
+
+      const rows = results
+        .map(
+          (r) => `
+            <tr>
+              <td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${r.color};margin-right:6px"></span>${r.label}</td>
+              <td class="text-end">${fmt(r.total_ha)}</td>
+              <td class="text-end">${fmt(r.irr_ha)}</td>
+              <td class="text-end">${fmt(r.share)}%</td>
+            </tr>`
+        )
+        .join("");
+
+      const thr =
+        meta && meta.threshold != null
+          ? ` · threshold ${Number(meta.threshold).toFixed(2)}`
+          : "";
+      const sub = meta
+        ? `<div class="small text-secondary mb-2">Period ${meta.iso_period} · band ${meta.band}${thr}</div>`
+        : "";
+
+      this.setAnalysisHtml(`
+        <div class="mb-1 fw-semibold">Irrigated area — ${results.length} polygons</div>
+        ${sub}
+        <div class="mb-2">${bars}</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-dark table-striped align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Polygon</th>
+                <th class="text-end">Total&nbsp;(ha)</th>
+                <th class="text-end">Irrigated&nbsp;(ha)</th>
+                <th class="text-end">Share</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `);
+
+      const box = document.getElementById("analysisBox");
+      if (box && box.scrollIntoView) {
+        box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+
     // ----------------- Freehand WaPOR time-series analysis -----------------
+    // POST one polygon geometry to the WaPOR endpoint; returns {items, message}.
+    async _fetchWaporTimeseries(geom, opts = {}) {
+      const resp = await fetch("/api/wapor/timeseries/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          geometry: geom,
+          dekad_date: opts.dekad_date || null,
+          start_date: opts.start_date || null,
+          end_date: opts.end_date || null,
+        }),
+      });
+      if (!resp.ok) {
+        const err = new Error(`WaPOR time series failed (${resp.status})`);
+        err.status = resp.status;
+        throw err;
+      }
+      const data = await resp.json();
+      return {
+        items: Array.isArray(data.items) ? data.items : [],
+        message: data.message || "",
+      };
+    }
+
     async runFreehandWaporTimeseries(geom, opts = {}) {
       try {
         this.setStatus("Running WaPOR time-series on drawn polygon…", false);
-        const resp = await fetch("/api/wapor/timeseries/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            geometry: geom,
-            dekad_date: opts.dekad_date || null,
-            start_date: opts.start_date || null,
-            end_date: opts.end_date || null,
-          }),
-        });
-        if (!resp.ok) {
-          this.setStatus(`WaPOR time series failed (${resp.status})`, true);
-          return;
-        }
-        const data = await resp.json();
-        const items = Array.isArray(data.items) ? data.items : [];
+        const { items, message } = await this._fetchWaporTimeseries(geom, opts);
         if (!items.length || items.every((it) => !it.n_pixels)) {
           this.setAnalysisHtml(
-            `<em>${data.message || "No WaPOR pixels inside the drawn polygon for the selected date."}</em>`
+            `<em>${message || "No WaPOR pixels inside the drawn polygon for the selected date."}</em>`
           );
           this.setStatus("No WaPOR pixels inside polygon.", true);
           return;
@@ -572,6 +749,58 @@
         this.setStatus("WaPOR time-series complete.", false);
       } catch (err) {
         console.error("Freehand WaPOR time-series failed", err);
+        this.setStatus(err.message || "WaPOR time series failed.", true);
+      }
+    }
+
+    // Run the WaPOR time series for EVERY drawn polygon and overlay them as
+    // colour-coded series (supports 3+). A single polygon keeps the original
+    // single-series chart with error bars.
+    async runMultiWaporTimeseries(opts = {}) {
+      const fc = this.draw && this.draw.getAll ? this.draw.getAll() : null;
+      const polys = (fc && fc.features ? fc.features : []).filter(
+        (f) =>
+          f && f.geometry &&
+          (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon")
+      );
+      if (!polys.length) {
+        this.setStatus(_t("status_draw_polygon_first", "Draw a polygon first."), true);
+        return;
+      }
+      if (polys.length === 1) {
+        return this.runFreehandWaporTimeseries(polys[0].geometry, opts);
+      }
+      try {
+        this.setStatus(`Running WaPOR time-series on ${polys.length} polygons…`, false);
+        const results = await Promise.all(
+          polys.map((f) =>
+            this._fetchWaporTimeseries(f.geometry, opts)
+              .then((r) => r.items)
+              .catch((e) => {
+                console.error("WaPOR time-series failed for one polygon", e);
+                return [];
+              })
+          )
+        );
+        const series = results
+          .map((items, i) => ({ label: `Polygon ${i + 1}`, items: items || [] }))
+          .filter((s) =>
+            s.items.some((it) => it.n_pixels && Number.isFinite(it.mean_eta))
+          );
+        if (!series.length) {
+          this.setAnalysisHtml(
+            "<em>No WaPOR pixels inside any of the drawn polygons for the selected dates.</em>"
+          );
+          this.setStatus("No WaPOR pixels inside polygons.", true);
+          return;
+        }
+        this.renderWaporTimeseriesMulti(series, { totalPolys: polys.length });
+        this.setStatus(
+          `WaPOR time-series complete (${series.length} of ${polys.length} polygons).`,
+          false
+        );
+      } catch (err) {
+        console.error("Multi WaPOR time-series failed", err);
         this.setStatus("WaPOR time series failed.", true);
       }
     }
@@ -618,137 +847,222 @@
       }
     }
 
+    // Backwards-compatible single-series entry point (boundary analysis and the
+    // single-polygon freehand path both call this).
     renderWaporTimeseries(label, items) {
-      const fmt = (n) => (n == null ? "—" : Number(n).toFixed(2));
-      // Sort items chronologically by dekad_date so multi-year inputs render
-      // left-to-right in time order regardless of backend ordering.
-      const valid = items
-        .filter((it) => Number.isFinite(it.mean_eta))
-        .slice()
-        .sort((a, b) => (a.dekad_date || "").localeCompare(b.dekad_date || ""));
+      this.renderWaporTimeseriesMulti([{ label, items }]);
+    }
 
-      // Chart geometry — grow taller when there are lots of points so the
-      // rotated date labels along the x-axis stay readable.
+    // Render one or more WaPOR time series on a shared axis. Each series is a
+    // drawn polygon; with >1 series they are colour-coded and a legend is shown.
+    renderWaporTimeseriesMulti(series, meta = {}) {
+      const PALETTE = POLY_PALETTE;
+      const fmt = (n) => (n == null ? "—" : Number(n).toFixed(2));
+
+      // Keep ALL returned dekads per series (the backend returns one item per
+      // dekad in range, with mean_eta:null when a dekad has no data). `fin` are
+      // the plottable points; `all` drives the x-axis so a no-data dekad still
+      // shows as a tick instead of silently collapsing the chart.
+      const sv = (series || [])
+        .map((s, i) => {
+          const all = (s.items || [])
+            .slice()
+            .sort((a, b) => (a.dekad_date || "").localeCompare(b.dekad_date || ""));
+          return {
+            label: s.label,
+            color: PALETTE[i % PALETTE.length],
+            all,
+            fin: all.filter((it) => Number.isFinite(it.mean_eta)),
+          };
+        })
+        .filter((s) => s.fin.length);
+
+      if (!sv.length) {
+        this.setAnalysisHtml('<div class="small text-secondary">No valid dekads.</div>');
+        return;
+      }
+
+      const multi = sv.length > 1;
+
+      // Shared x-axis = sorted union of EVERY returned dekad (incl. no-data).
+      const dateSet = new Set();
+      sv.forEach((s) => s.all.forEach((it) => { if (it.dekad_date) dateSet.add(it.dekad_date); }));
+      const dates = Array.from(dateSet).filter(Boolean).sort();
+      const xIndex = new Map(dates.map((d, i) => [d, i]));
+      const nX = dates.length || 1;
+      // A dekad with no finite value in ANY series → render as a visible gap.
+      const missingAll = (d) => !sv.some((s) => s.fin.some((p) => p.dekad_date === d));
+      const hasGap = sv.some((s) => s.fin.length < nX);
+
+      // Chart geometry — taller when dense so rotated x-labels stay readable.
       const W = 380;
-      const H = valid.length > 12 ? 220 : 180;
+      const H = nX > 12 ? 220 : 180;
       const m = { top: 16, right: 16, bottom: 50, left: 40 };
       const innerW = W - m.left - m.right;
       const innerH = H - m.top - m.bottom;
 
-      let svg = "";
-      if (valid.length >= 1) {
-        const stds = valid.map((it) => Number.isFinite(it.std_eta) ? it.std_eta : 0);
-        const meansLo = valid.map((it, i) => it.mean_eta - stds[i]);
-        const meansHi = valid.map((it, i) => it.mean_eta + stds[i]);
-        const dataMin = Math.min(...meansLo);
-        const dataMax = Math.max(...meansHi);
-        const pad = Math.max(0.5, (dataMax - dataMin) * 0.1);
-        const yMin = dataMin - pad;
-        const yMax = dataMax + pad;
-        const yRange = yMax - yMin || 1;
+      // Y-range across every series (mean ± std).
+      let dataMin = Infinity;
+      let dataMax = -Infinity;
+      sv.forEach((s) =>
+        s.fin.forEach((p) => {
+          const std = Number.isFinite(p.std_eta) ? p.std_eta : 0;
+          dataMin = Math.min(dataMin, p.mean_eta - std);
+          dataMax = Math.max(dataMax, p.mean_eta + std);
+        })
+      );
+      const pad = Math.max(0.5, (dataMax - dataMin) * 0.1);
+      const yMin = dataMin - pad;
+      const yMax = dataMax + pad;
+      const yRange = yMax - yMin || 1;
 
-        const xAt = (i) =>
-          m.left + (valid.length === 1
-            ? innerW / 2
-            : (innerW * i) / (valid.length - 1));
-        const yAt = (v) => m.top + innerH - (innerH * (v - yMin)) / yRange;
+      const xAt = (d) =>
+        m.left + (nX === 1 ? innerW / 2 : (innerW * (xIndex.get(d) || 0)) / (nX - 1));
+      const yAt = (v) => m.top + innerH - (innerH * (v - yMin)) / yRange;
 
-        // Y-axis tick lines (3 ticks)
-        const yTicks = [yMin, (yMin + yMax) / 2, yMax];
-        const gridLines = yTicks
-          .map(
-            (v) => `
-              <line x1="${m.left}" x2="${W - m.right}"
-                    y1="${yAt(v)}" y2="${yAt(v)}"
-                    stroke="rgba(148,163,184,.2)" stroke-width="1"/>
-              <text x="${m.left - 6}" y="${yAt(v) + 3}"
-                    text-anchor="end" font-size="10" fill="#94a3b8">
-                ${v.toFixed(1)}
-              </text>
-            `
-          )
-          .join("");
+      // Y-axis tick lines (3 ticks)
+      const yTicks = [yMin, (yMin + yMax) / 2, yMax];
+      const gridLines = yTicks
+        .map(
+          (v) => `
+            <line x1="${m.left}" x2="${W - m.right}"
+                  y1="${yAt(v)}" y2="${yAt(v)}"
+                  stroke="rgba(148,163,184,.2)" stroke-width="1"/>
+            <text x="${m.left - 6}" y="${yAt(v) + 3}"
+                  text-anchor="end" font-size="10" fill="#94a3b8">
+              ${v.toFixed(1)}
+            </text>
+          `
+        )
+        .join("");
 
-        // Error bars
-        const errBars = valid
-          .map((it, i) => {
-            const std = stds[i];
+      const xAxis = `
+        <line x1="${m.left}" x2="${W - m.right}"
+              y1="${H - m.bottom}" y2="${H - m.bottom}"
+              stroke="#475569" stroke-width="1"/>
+      `;
+
+      // Dashed vertical guides at dekads that have NO data in any series, so a
+      // no-data dekad is visible rather than silently dropped from the axis.
+      const gapGuides = dates
+        .map((d) => {
+          if (!missingAll(d)) return "";
+          const x = xAt(d);
+          return `<line x1="${x}" x2="${x}" y1="${m.top}" y2="${H - m.bottom}"
+                        stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>`;
+        })
+        .join("");
+
+      // Error bars only for the single-series case (avoids clutter when 3+).
+      let errBars = "";
+      if (!multi) {
+        errBars = sv[0].fin
+          .map((p) => {
+            const std = Number.isFinite(p.std_eta) ? p.std_eta : 0;
             if (!std) return "";
-            const x = xAt(i);
+            const x = xAt(p.dekad_date);
             return `
               <line x1="${x}" x2="${x}"
-                    y1="${yAt(it.mean_eta - std)}" y2="${yAt(it.mean_eta + std)}"
+                    y1="${yAt(p.mean_eta - std)}" y2="${yAt(p.mean_eta + std)}"
                     stroke="#94a3b8" stroke-width="1.5"/>
-              <line x1="${x - 3}" x2="${x + 3}" y1="${yAt(it.mean_eta - std)}" y2="${yAt(it.mean_eta - std)}" stroke="#94a3b8" stroke-width="1.5"/>
-              <line x1="${x - 3}" x2="${x + 3}" y1="${yAt(it.mean_eta + std)}" y2="${yAt(it.mean_eta + std)}" stroke="#94a3b8" stroke-width="1.5"/>
+              <line x1="${x - 3}" x2="${x + 3}" y1="${yAt(p.mean_eta - std)}" y2="${yAt(p.mean_eta - std)}" stroke="#94a3b8" stroke-width="1.5"/>
+              <line x1="${x - 3}" x2="${x + 3}" y1="${yAt(p.mean_eta + std)}" y2="${yAt(p.mean_eta + std)}" stroke="#94a3b8" stroke-width="1.5"/>
             `;
           })
           .join("");
-
-        // Connected mean line
-        const linePath = valid.length === 1
-          ? ""
-          : `<path d="${valid.map((it, i) => `${i === 0 ? "M" : "L"} ${xAt(i)} ${yAt(it.mean_eta)}`).join(" ")}"
-                  stroke="#22d3ee" stroke-width="2" fill="none"/>`;
-
-        // Markers with tooltip
-        const markers = valid
-          .map(
-            (it, i) => `
-              <circle cx="${xAt(i)}" cy="${yAt(it.mean_eta)}" r="4"
-                      fill="#22d3ee" stroke="#0f172a" stroke-width="1.5">
-                <title>${it.dekad_date || it.dekad}: ${fmt(it.mean_eta)} ± ${fmt(it.std_eta)} mm</title>
-              </circle>
-            `
-          )
-          .join("");
-
-        // X-axis labels: full YYYY-MM-DD when sparse, year-tick-only when
-        // dense. Rotated 45° so multi-year ranges don't overlap.
-        const maxLabels = 8;
-        const stride = Math.max(1, Math.ceil(valid.length / maxLabels));
-        const xLabels = valid
-          .map((it, i) => {
-            if (i % stride !== 0 && i !== valid.length - 1) return "";
-            const d = it.dekad_date || "";
-            return `
-              <text x="${xAt(i)}" y="${H - m.bottom + 14}"
-                    text-anchor="end" font-size="10" fill="#94a3b8"
-                    transform="rotate(-45 ${xAt(i)} ${H - m.bottom + 14})">
-                ${d}
-              </text>
-            `;
-          })
-          .join("");
-
-        const xAxis = `
-          <line x1="${m.left}" x2="${W - m.right}"
-                y1="${H - m.bottom}" y2="${H - m.bottom}"
-                stroke="#475569" stroke-width="1"/>
-        `;
-
-        svg = `
-          <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}"
-               preserveAspectRatio="xMidYMid meet" class="wapor-ts-chart">
-            ${gridLines}
-            ${xAxis}
-            ${errBars}
-            ${linePath}
-            ${markers}
-            ${xLabels}
-            <text x="${m.left}" y="12" font-size="10" fill="#94a3b8">mm / dekad</text>
-          </svg>
-        `;
-      } else {
-        svg = '<div class="small text-secondary">No valid dekads.</div>';
       }
 
+      // One connected line + markers per series. The line joins finite points
+      // in date order (bridging any no-data dekad); the missing marker plus the
+      // dashed guide make the gap obvious.
+      const seriesSvg = sv
+        .map((s) => {
+          const linePath =
+            s.fin.length === 1
+              ? ""
+              : `<path d="${s.fin
+                  .map(
+                    (p, i) =>
+                      `${i === 0 ? "M" : "L"} ${xAt(p.dekad_date)} ${yAt(p.mean_eta)}`
+                  )
+                  .join(" ")}" stroke="${s.color}" stroke-width="2" fill="none"/>`;
+          const markers = s.fin
+            .map(
+              (p) => `
+                <circle cx="${xAt(p.dekad_date)}" cy="${yAt(p.mean_eta)}" r="${multi ? 3.5 : 4}"
+                        fill="${s.color}" stroke="#0f172a" stroke-width="1.5">
+                  <title>${multi ? s.label + " — " : ""}${p.dekad_date || p.dekad}: ${fmt(p.mean_eta)} ± ${fmt(p.std_eta)} mm</title>
+                </circle>
+              `
+            )
+            .join("");
+          return linePath + markers;
+        })
+        .join("");
+
+      // X-axis labels, rotated 45°, strided when dense.
+      const maxLabels = 8;
+      const stride = Math.max(1, Math.ceil(nX / maxLabels));
+      const xLabels = dates
+        .map((d, i) => {
+          const miss = missingAll(d);
+          // Always label a no-data dekad (in red) even when labels are strided.
+          if (!miss && i % stride !== 0 && i !== nX - 1) return "";
+          return `
+            <text x="${xAt(d)}" y="${H - m.bottom + 14}"
+                  text-anchor="end" font-size="10" fill="${miss ? "#fca5a5" : "#94a3b8"}"
+                  transform="rotate(-45 ${xAt(d)} ${H - m.bottom + 14})">
+              ${d}
+            </text>
+          `;
+        })
+        .join("");
+
+      const svg = `
+        <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}"
+             preserveAspectRatio="xMidYMid meet" class="wapor-ts-chart">
+          ${gridLines}
+          ${gapGuides}
+          ${xAxis}
+          ${errBars}
+          ${seriesSvg}
+          ${xLabels}
+          <text x="${m.left}" y="12" font-size="10" fill="#94a3b8">mm / dekad</text>
+        </svg>
+      `;
+
+      // Legend (only when comparing multiple polygons).
+      const legend = multi
+        ? `<div class="d-flex flex-wrap gap-2 mt-2 small text-secondary">` +
+          sv
+            .map(
+              (s) =>
+                `<span class="d-inline-flex align-items-center gap-1">
+                   <span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${s.color}"></span>
+                   ${s.label}
+                 </span>`
+            )
+            .join("") +
+          `</div>`
+        : "";
+
+      const titleLabel = multi
+        ? `${sv.length} polygons`
+        : (series[0] && series[0].label) || "Drawn polygon";
+      const polyNote =
+        multi && meta.totalPolys && meta.totalPolys !== sv.length
+          ? ` · ${sv.length} of ${meta.totalPolys} with data`
+          : multi
+          ? ` · ${sv.length} polygons`
+          : "";
+
       this.setAnalysisHtml(`
-        <div class="mb-1 fw-semibold">Crop water use — ${label}</div>
+        <div class="mb-1 fw-semibold">Crop water use — ${titleLabel}</div>
         <div class="small text-secondary mb-2">
-          Mean WaPOR L1 AETI_D (mm / dekad) · ${valid.length} dekad${valid.length === 1 ? "" : "s"}
+          Mean WaPOR L1 AETI_D (mm / dekad) · ${nX} dekad${nX === 1 ? "" : "s"}${polyNote}${hasGap ? " · dashed = no data" : ""}
         </div>
         ${svg}
+        ${legend}
       `);
 
       const box = document.getElementById("analysisBox");
