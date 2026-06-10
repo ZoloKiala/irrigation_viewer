@@ -1421,12 +1421,15 @@
       properties: { name: "Drawn polygon" },
     };
     if (mode === "wapor_ts") {
-      analysisManager.runFreehandWaporTimeseries(feature.geometry, {
+      // Chart all drawn polygons together (supports 3+), using the popup's
+      // shared start/end date range for every polygon.
+      analysisManager.runMultiWaporTimeseries({
         start_date: opts.start_date || null,
         end_date: opts.end_date || null,
       });
     } else if (mode === "irrigation") {
-      analysisManager.runBoundaryIrrigationAnalysis(fakeFeature, "Drawn polygon");
+      // Irrigated area (ha) for all drawn polygons — comparison when >1.
+      analysisManager.runMultiIrrigationAnalysis();
     } else {
       analysisManager.runFreehandAnalysis();
     }
@@ -1466,12 +1469,33 @@
       } catch (_) {}
     }
 
+    // When several polygons are drawn, Crop-water-use charts them together —
+    // tell the user so the singular "Drawn polygon" header isn't misleading.
+    let multiHint = "";
+    try {
+      const allFc =
+        analysisManager && analysisManager.draw && analysisManager.draw.getAll
+          ? analysisManager.draw.getAll()
+          : null;
+      const nPoly = allFc && allFc.features
+        ? allFc.features.filter(
+            (f) =>
+              f.geometry &&
+              (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon")
+          ).length
+        : 0;
+      if (nPoly > 1) {
+        multiHint = `<div class="text-info small mb-2">Analysis will use all ${nPoly} drawn polygons together.</div>`;
+      }
+    } catch (_) {}
+
     // Stack the select + button vertically so a narrow popup never clips
     // the Run-analysis button at the map edge.
     const html = `
       <div class="small popup-body" style="min-width: 220px;">
         <div class="fw-semibold mb-1">Drawn polygon</div>
         ${areaHtml}
+        ${multiHint}
         <label class="form-label form-label-sm mb-1">Analysis type</label>
         <select id="drawAnalysisType" class="form-select form-select-sm mb-2">
           ${options}
