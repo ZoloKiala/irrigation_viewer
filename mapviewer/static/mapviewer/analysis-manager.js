@@ -858,22 +858,33 @@
     renderWaporTimeseriesMulti(series, meta = {}) {
       const PALETTE = POLY_PALETTE;
       const fmt = (n) => (n == null ? "—" : Number(n).toFixed(2));
+      const cum = meta.mode === "cumulative";
+      // Remember the data so the Per-dekad / Cumulative toggle can re-render.
+      this._waporSeries = series;
+      this._waporMeta = meta;
 
       // Keep ALL returned dekads per series (the backend returns one item per
       // dekad in range, with mean_eta:null when a dekad has no data). `fin` are
       // the plottable points; `all` drives the x-axis so a no-data dekad still
-      // shows as a tick instead of silently collapsing the chart.
+      // shows as a tick. `plot` carries the value actually drawn — the per-dekad
+      // mean, or the running cumulative total when in cumulative mode. `total`
+      // is the summed WaPOR use (mm) over the period.
       const sv = (series || [])
         .map((s, i) => {
           const all = (s.items || [])
             .slice()
             .sort((a, b) => (a.dekad_date || "").localeCompare(b.dekad_date || ""));
-          return {
-            label: s.label,
-            color: PALETTE[i % PALETTE.length],
-            all,
-            fin: all.filter((it) => Number.isFinite(it.mean_eta)),
-          };
+          const fin = all.filter((it) => Number.isFinite(it.mean_eta));
+          let run = 0;
+          const plot = fin.map((p) => {
+            run += p.mean_eta;
+            return {
+              dekad_date: p.dekad_date, dekad: p.dekad,
+              mean_eta: p.mean_eta, std_eta: p.std_eta,
+              cum: run, val: cum ? run : p.mean_eta,
+            };
+          });
+          return { label: s.label, color: PALETTE[i % PALETTE.length], all, fin, plot, total: run };
         })
         .filter((s) => s.fin.length);
 
@@ -897,22 +908,24 @@
       // Chart geometry — taller when dense so rotated x-labels stay readable.
       const W = 380;
       const H = nX > 12 ? 220 : 180;
-      const m = { top: 16, right: 16, bottom: 50, left: 40 };
+      const m = { top: 16, right: 16, bottom: 50, left: cum ? 48 : 40 };
       const innerW = W - m.left - m.right;
       const innerH = H - m.top - m.bottom;
 
-      // Y-range across every series (mean ± std).
+      // Y-range across the plotted values (± std only in per-dekad mode; the
+      // cumulative curve has no meaningful per-point error and starts at 0).
       let dataMin = Infinity;
       let dataMax = -Infinity;
       sv.forEach((s) =>
-        s.fin.forEach((p) => {
-          const std = Number.isFinite(p.std_eta) ? p.std_eta : 0;
-          dataMin = Math.min(dataMin, p.mean_eta - std);
-          dataMax = Math.max(dataMax, p.mean_eta + std);
+        s.plot.forEach((p) => {
+          const std = !cum && Number.isFinite(p.std_eta) ? p.std_eta : 0;
+          dataMin = Math.min(dataMin, p.val - std);
+          dataMax = Math.max(dataMax, p.val + std);
         })
       );
+      if (cum) dataMin = Math.min(dataMin, 0);
       const pad = Math.max(0.5, (dataMax - dataMin) * 0.1);
-      const yMin = dataMin - pad;
+      const yMin = cum ? 0 : dataMin - pad; // cumulative reads from a 0 baseline
       const yMax = dataMax + pad;
       const yRange = yMax - yMin || 1;
 
@@ -953,9 +966,10 @@
         })
         .join("");
 
-      // Error bars only for the single-series case (avoids clutter when 3+).
+      // Error bars only for the single-series, per-dekad case (cumulative has
+      // no meaningful per-point spread; 3+ series would be cluttered).
       let errBars = "";
-      if (!multi) {
+      if (!multi && !cum) {
         errBars = sv[0].fin
           .map((p) => {
             const std = Number.isFinite(p.std_eta) ? p.std_eta : 0;
@@ -978,20 +992,24 @@
       const seriesSvg = sv
         .map((s) => {
           const linePath =
-            s.fin.length === 1
+            s.plot.length === 1
               ? ""
-              : `<path d="${s.fin
+              : `<path d="${s.plot
                   .map(
                     (p, i) =>
-                      `${i === 0 ? "M" : "L"} ${xAt(p.dekad_date)} ${yAt(p.mean_eta)}`
+                      `${i === 0 ? "M" : "L"} ${xAt(p.dekad_date)} ${yAt(p.val)}`
                   )
                   .join(" ")}" stroke="${s.color}" stroke-width="2" fill="none"/>`;
-          const markers = s.fin
+          const markers = s.plot
             .map(
               (p) => `
-                <circle cx="${xAt(p.dekad_date)}" cy="${yAt(p.mean_eta)}" r="${multi ? 3.5 : 4}"
+                <circle cx="${xAt(p.dekad_date)}" cy="${yAt(p.val)}" r="${multi ? 3.5 : 4}"
                         fill="${s.color}" stroke="#0f172a" stroke-width="1.5">
-                  <title>${multi ? s.label + " — " : ""}${p.dekad_date || p.dekad}: ${fmt(p.mean_eta)} ± ${fmt(p.std_eta)} mm</title>
+                  <title>${multi ? s.label + " — " : ""}${p.dekad_date || p.dekad}: ${
+                cum
+                  ? `Σ ${fmt(p.cum)} mm (dekad ${fmt(p.mean_eta)})`
+                  : `${fmt(p.mean_eta)} ± ${fmt(p.std_eta)} mm`
+              }</title>
                 </circle>
               `
             )
@@ -1027,11 +1045,19 @@
           ${errBars}
           ${seriesSvg}
           ${xLabels}
-          <text x="${m.left}" y="12" font-size="10" fill="#94a3b8">mm / dekad</text>
+          <text x="${m.left}" y="12" font-size="10" fill="#94a3b8">${cum ? "mm (cumulative)" : "mm / dekad"}</text>
         </svg>
       `;
 
-      // Legend (only when comparing multiple polygons).
+      // Per-dekad / Cumulative toggle.
+      const toggle = `
+        <div class="btn-group btn-group-sm mb-2" role="group" aria-label="WaPOR mode">
+          <button type="button" class="btn ${cum ? "btn-outline-secondary" : "btn-primary"} wapor-mode-btn" data-mode="dekad">Per dekad</button>
+          <button type="button" class="btn ${cum ? "btn-primary" : "btn-outline-secondary"} wapor-mode-btn" data-mode="cumulative">Cumulative</button>
+        </div>`;
+
+      // Legend (when comparing multiple polygons) — includes each polygon's
+      // cumulative total (Σ mm) over the period.
       const legend = multi
         ? `<div class="d-flex flex-wrap gap-2 mt-2 small text-secondary">` +
           sv
@@ -1039,7 +1065,7 @@
               (s) =>
                 `<span class="d-inline-flex align-items-center gap-1">
                    <span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${s.color}"></span>
-                   ${s.label}
+                   ${s.label} · Σ ${fmt(s.total)} mm
                  </span>`
             )
             .join("") +
@@ -1055,15 +1081,32 @@
           : multi
           ? ` · ${sv.length} polygons`
           : "";
+      const totalNote = !multi ? ` · Σ ${fmt(sv[0].total)} mm total` : "";
+      const metricLabel = cum
+        ? "Cumulative WaPOR L1 AETI_D (mm)"
+        : "Mean WaPOR L1 AETI_D (mm / dekad)";
 
       this.setAnalysisHtml(`
         <div class="mb-1 fw-semibold">Crop water use — ${titleLabel}</div>
         <div class="small text-secondary mb-2">
-          Mean WaPOR L1 AETI_D (mm / dekad) · ${nX} dekad${nX === 1 ? "" : "s"}${polyNote}${hasGap ? " · dashed = no data" : ""}
+          ${metricLabel} · ${nX} dekad${nX === 1 ? "" : "s"}${polyNote}${totalNote}${hasGap ? " · dashed = no data" : ""}
         </div>
+        ${toggle}
         ${svg}
         ${legend}
       `);
+
+      // Wire the toggle to re-render the stored series in the chosen mode.
+      setTimeout(() => {
+        document.querySelectorAll(".wapor-mode-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            this.renderWaporTimeseriesMulti(
+              this._waporSeries,
+              Object.assign({}, this._waporMeta, { mode: btn.dataset.mode })
+            );
+          });
+        });
+      }, 0);
 
       const box = document.getElementById("analysisBox");
       if (box && box.scrollIntoView) {
