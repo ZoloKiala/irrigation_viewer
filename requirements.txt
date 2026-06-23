@@ -1,5 +1,5 @@
 Django>=5.2,<6
-earthengine-api>=0.1.386
+earthengine-api>=1.7.32
 gunicorn
 whitenoise
 psycopg2-binary
